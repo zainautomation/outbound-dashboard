@@ -17,38 +17,58 @@ No test runner or linter is configured — TypeScript (`strict: true`) is the pr
 
 ### Data Flow
 
-The browser never calls Instantly directly. All live data goes through one server-side route:
+The browser never calls a outreach platform directly. Two server-side routes:
 
 ```
-Browser → POST /api/sync → Instantly MCP server (JSON-RPC over SSE)
-                              ├─ list_campaigns
-                              ├─ get_campaign_analytics
-                              ├─ list_accounts
-                              └─ count_unread_emails
-                         → flat DashboardData JSON → browser render
+POST /api/sync      → one client   → provider adapter → that client's MCP server
+POST /api/overview  → all clients  → provider adapter per client, in parallel
 ```
 
-The four tool calls run in parallel on one MCP session. There is no LLM in this
-path — `/api/sync` speaks JSON-RPC to the MCP server itself.
+Both return normalized JSON. There is no LLM in this path — the adapters speak
+JSON-RPC to the MCP servers themselves.
 
-MCP URLs embed the client's Instantly API key. They are read only inside API
-routes, never sent to the browser, and `redact()` strips them from error
-messages before anything is logged or returned.
+MCP URLs embed the platform API key. They are read only inside API routes, never
+sent to the browser, and `redact()` in `src/lib/authorize.ts` strips *every*
+configured client's URL from error messages before anything is logged or
+returned.
+
+### Providers
+
+`src/lib/providers/` normalizes two platforms that agree on almost nothing but
+the word "MCP". Before changing an adapter, know these differences:
+
+| | Instantly | Smartlead |
+|---|---|---|
+| Transport | Streamable HTTP (`POST` + `mcp-session-id`) | SSE — `GET /sse` opens a stream, server replies with a POST endpoint, responses come back on the stream matched by JSON-RPC id |
+| Auth | key in URL path | key must be passed as a `smartlead_user_api_key` **argument** on every call |
+| Analytics | one call returns every campaign | one call **per campaign** |
+| Active | `status === 1` | `status === "ACTIVE"` |
+| Counts | numbers | strings — always run through `num()` |
+| Body | pure JSON | prose prefix then JSON — always run through `parseToolJson()` |
+| Warmup | `stat_warmup_score` 0–100 | none; derived from inbox placement |
+| Unread | yes | not exposed — `unreadCount` is undefined, and the UI shows "—" |
+
+The Smartlead MCP URL may carry its key as `?smartlead_user_api_key=KEY` or as a
+bare `?KEY`. `extractApiKey()` handles both; the bare form is *not* forwarded by
+the server to tool calls, which is why the key is injected per call.
+
+Adding a platform: write an adapter returning `ProviderData`, register it in
+`src/lib/providers/index.ts`, and extend `ProviderId`.
 
 ### Auth Model
 
-Two roles validated in `/api/auth` against env vars only — no database:
+Two roles validated against env vars only — no database:
 
-- **Admin**: `ADMIN_USERNAME` + `ADMIN_PASSWORD` → sees all clients via dropdown, can switch workspaces
+- **Admin**: `ADMIN_USERNAME` + `ADMIN_PASSWORD` → the cross-client overview plus any single workspace
 - **Client**: `CLIENT_{ID}_USERNAME` + `CLIENT_{ID}_PASSWORD` → locked to their own workspace
 
 `getAdminCredentials()` returns `null` when the env vars are unset — there is
 deliberately no default value, so a misconfigured deployment fails closed rather
-than granting admin access. Do not reintroduce a fallback.
+than granting admin access. **Do not reintroduce a fallback.**
 
-`/api/sync` re-validates credentials on every call (role + username + password
-in the request body) via `authorize()`, which also pins client users to their
-own `clientId` regardless of what they request.
+Every data route re-validates credentials from the request body:
+`authorizeClient()` pins client users to their own `clientId` regardless of what
+they request; `authorizeAdmin()` guards `/api/overview` entirely.
 
 ### Client Configuration
 
@@ -59,30 +79,37 @@ CLIENT_{ID}_NAME=Display Name
 CLIENT_{ID}_MCP_URL=https://mcp.instantly.ai/mcp/API_KEY
 CLIENT_{ID}_USERNAME=login
 CLIENT_{ID}_PASSWORD=password
+CLIENT_{ID}_PROVIDER=instantly|smartlead   # optional; inferred from the host
 ```
 
 `src/lib/clients.ts` scans `process.env` for keys matching `CLIENT_*_NAME`. The
-`{ID}` segment becomes the client's internal id (lowercased). Entries missing
-any of the four keys are skipped rather than half-configured.
+`{ID}` segment becomes the client's internal id (lowercased). Entries missing any
+required key are skipped rather than half-configured. All values are trimmed —
+a stray leading space in a NAME reaches the UI otherwise.
 
 ### File Map
 
-- `src/app/page.tsx` — all UI (`'use client'`), components co-located as named functions
-- `src/app/layout.tsx` — Bricolage Grotesque + DM Mono fonts, metadata
-- `src/app/globals.css` — theme CSS variables, animations
+- `src/app/page.tsx` — all UI (`'use client'`), components co-located
 - `src/app/api/auth/route.ts` — POST: validates credentials, returns role + client list
-- `src/app/api/sync/route.ts` — POST: authorizes, calls MCP, returns `DashboardData`
-- `src/lib/clients.ts` — env-var client registry and credential checks
-- `src/lib/types.ts` — shared types across API routes and UI
-- `src/lib/metrics.ts` — reply rate, warmup averages, sorting (shared by `Workspace` and `AIAssistant`)
+- `src/app/api/sync/route.ts` — POST: one client's workspace
+- `src/app/api/overview/route.ts` — POST: admin-only, every client at once
+- `src/lib/providers/mcp.ts` — both MCP transports, `parseToolJson()`, `num()`
+- `src/lib/providers/{instantly,smartlead}.ts` — per-platform adapters
+- `src/lib/authorize.ts` — credential checks and `redact()`
+- `src/lib/clients.ts` — env-var client registry
+- `src/lib/types.ts` — types shared between API routes and UI
+- `src/lib/metrics.ts` — reply rate, warmup averages, sorting
 
 Derived metrics belong in `src/lib/metrics.ts`, not inline in a component —
-`Workspace` and `AIAssistant` both consume them and previously drifted apart.
+`Workspace`, `AdminOverview` and `AIAssistant` all consume them.
+
+One failing client must never blank the admin overview: `/api/overview` catches
+per-client errors and reports them in that client's rollup.
 
 ## Design System
 
 Light theme: **pearl white surfaces, charcoal text.** Colors are CSS variables in
-`globals.css` and are mirrored in `tailwind.config.js` — always use them, never
+`globals.css` and mirrored in `tailwind.config.js` — always use them, never
 hardcode hex values in new UI.
 
 | Variable | Use |
@@ -96,7 +123,7 @@ hardcode hex values in new UI.
 | `var(--line)` / `var(--line-strong)` | Hairlines, borders |
 | `var(--orange)` | Brand fills — logo tile, decorative bars |
 | `var(--orange-ink)` | Orange **text** and CTA fills on light surfaces |
-| `var(--blue-ink)` / `var(--green-ink)` | Reply metrics / pipeline values |
+| `var(--blue-ink)` / `var(--green-ink)` | Reply metrics / pipeline and healthy states |
 
 Orange splits deliberately: `--orange` (#f97316) is vivid enough for fills but
 only hits ~2.6:1 on pearl, so anything that renders as text or carries white
@@ -110,7 +137,7 @@ followed by a hairline rule.
 
 These features are planned but unbuilt — do not assume they exist:
 
-- Admin overview page (all clients as summary cards)
 - Add-client UI form (clients are env-var only today)
 - Per-campaign drill-down or email sequence viewer
 - Notifications for reply spikes or warmup score drops
+- Any persistence — every sync hits the provider live, nothing is cached or stored

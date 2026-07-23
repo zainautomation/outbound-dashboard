@@ -7,14 +7,16 @@ export function replyRate(sent: number, replies: number): number {
   return sent > 0 ? (replies / sent) * 100 : 0
 }
 
-export function averageWarmupScore(accounts: EmailAccount[]): number {
-  if (accounts.length === 0) return 0
-  const total = accounts.reduce((sum, a) => sum + (a.stat_warmup_score ?? 0), 0)
-  return Math.round(total / accounts.length)
+/** Averages only accounts the provider reported a score for. */
+export function averageWarmupScore(accounts: EmailAccount[]): number | undefined {
+  const scored = accounts.filter(a => a.warmupScore !== undefined)
+  if (scored.length === 0) return undefined
+  const total = scored.reduce((sum, a) => sum + (a.warmupScore ?? 0), 0)
+  return Math.round(total / scored.length)
 }
 
 export function countLowWarmup(accounts: EmailAccount[]): number {
-  return accounts.filter(a => (a.stat_warmup_score ?? 0) < WARMUP_THRESHOLD).length
+  return accounts.filter(a => a.warmupScore !== undefined && a.warmupScore < WARMUP_THRESHOLD).length
 }
 
 /** Newest campaigns first; entries without a known creation date sort last. */
@@ -22,22 +24,19 @@ export function sortByNewest(
   analytics: CampaignAnalytics[],
   campaigns: Campaign[],
 ): CampaignAnalytics[] {
-  const createdAt = new Map(campaigns.map(c => [c.id, c.created_at]))
+  const createdAt = new Map(campaigns.map(c => [c.id, c.createdAt]))
   const time = (a: CampaignAnalytics) => {
-    const created = createdAt.get(a.campaign_id)
+    const created = createdAt.get(a.campaignId)
     return created ? new Date(created).getTime() : 0
   }
   return [...analytics].sort((a, b) => time(b) - time(a))
 }
 
 /** The campaign with the highest reply rate, or null when nothing has sent yet. */
-export function topCampaign(analytics: CampaignAnalytics[]): CampaignAnalytics | null {
-  const sending = analytics.filter(a => (a.emails_sent_count ?? 0) > 0)
+export function topCampaign<T extends CampaignAnalytics>(analytics: T[]): T | null {
+  const sending = analytics.filter(a => a.sent > 0)
   if (sending.length === 0) return null
   return sending.reduce((best, a) =>
-    replyRate(a.emails_sent_count ?? 0, a.reply_count ?? 0) >
-    replyRate(best.emails_sent_count ?? 0, best.reply_count ?? 0)
-      ? a
-      : best,
+    replyRate(a.sent, a.replies) > replyRate(best.sent, best.replies) ? a : best,
   )
 }

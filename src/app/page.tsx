@@ -10,18 +10,25 @@ import {
   topCampaign,
 } from '@/lib/metrics'
 import type {
-  CampaignAnalytics,
+  AttributedCampaign,
+  ClientRollup,
   DashboardData,
   EmailAccount,
+  OverviewData,
+  ProviderId,
   Session,
 } from '@/lib/types'
 
 const SYNC_SECONDS = 30
 
+/** Sentinel for the admin's cross-client view. */
+const ALL_CLIENTS = ''
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null)
-  const [selectedClient, setSelectedClient] = useState('')
+  const [selectedClient, setSelectedClient] = useState(ALL_CLIENTS)
   const [data, setData] = useState<DashboardData | null>(null)
+  const [overview, setOverview] = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [countdown, setCountdown] = useState(SYNC_SECONDS)
@@ -30,6 +37,8 @@ export default function Home() {
   const [authUser, setAuthUser] = useState('')
   const [authPass, setAuthPass] = useState('')
   const [authError, setAuthError] = useState('')
+
+  const isOverview = session?.role === 'admin' && selectedClient === ALL_CLIENTS
 
   async function handleLogin() {
     setAuthError('')
@@ -44,35 +53,33 @@ export default function Home() {
     }
     const auth = await res.json()
     setSession({ ...auth, password: authPass })
-    if (auth.role === 'user') setSelectedClient(auth.clientId)
+    setSelectedClient(auth.role === 'user' ? auth.clientId : ALL_CLIENTS)
   }
 
   function logout() {
     clearInterval(intervalRef.current)
     setSession(null)
     setData(null)
-    setSelectedClient('')
+    setOverview(null)
+    setSelectedClient(ALL_CLIENTS)
     setCountdown(SYNC_SECONDS)
   }
 
-  const syncData = useCallback(async (clientId: string, sess: Session) => {
-    if (!clientId) return
+  const sync = useCallback(async (clientId: string, sess: Session) => {
+    const wantsOverview = sess.role === 'admin' && clientId === ALL_CLIENTS
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/sync', {
+      const body = { role: sess.role, username: sess.username, password: sess.password }
+      const res = await fetch(wantsOverview ? '/api/overview' : '/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId,
-          role: sess.role,
-          username: sess.username,
-          password: sess.password,
-        }),
+        body: JSON.stringify(wantsOverview ? body : { ...body, clientId }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Sync failed')
-      setData(json)
+      if (wantsOverview) setOverview(json)
+      else setData(json)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
     } finally {
@@ -81,21 +88,23 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (!session || !selectedClient) return
+    if (!session) return
+    // A client user has no workspace until their id resolves.
+    if (session.role === 'user' && !selectedClient) return
 
-    syncData(selectedClient, session)
+    sync(selectedClient, session)
     setCountdown(SYNC_SECONDS)
 
     intervalRef.current = setInterval(() => {
       setCountdown(c => {
         if (c > 1) return c - 1
-        syncData(selectedClient, session)
+        sync(selectedClient, session)
         return SYNC_SECONDS
       })
     }, 1000)
 
     return () => clearInterval(intervalRef.current)
-  }, [selectedClient, session, syncData])
+  }, [selectedClient, session, sync])
 
   if (!session) {
     return (
@@ -109,6 +118,8 @@ export default function Home() {
       />
     )
   }
+
+  const current = isOverview ? overview : data
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--pearl)' }}>
@@ -144,6 +155,7 @@ export default function Home() {
             onChange={e => {
               setSelectedClient(e.target.value)
               setData(null)
+              setError('')
             }}
             className="text-[13px] px-3 py-1.5 rounded-lg outline-none border ml-1"
             style={{
@@ -151,7 +163,7 @@ export default function Home() {
               borderColor: 'var(--line-strong)',
               color: 'var(--ink)',
             }}>
-            <option value="">— Select client —</option>
+            <option value={ALL_CLIENTS}>All clients</option>
             {session.clients.map(c => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -161,22 +173,18 @@ export default function Home() {
         )}
 
         <div className="ml-auto flex items-center gap-3">
-          {selectedClient && (
-            <>
-              <span className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>
-                Live ·{' '}
-                <span className="font-mono" style={{ color: 'var(--orange-ink)' }}>
-                  {countdown}s
-                </span>
-              </span>
-              <button
-                onClick={() => syncData(selectedClient, session)}
-                className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
-                style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
-                ↻ Refresh
-              </button>
-            </>
-          )}
+          <span className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+            Live ·{' '}
+            <span className="font-mono" style={{ color: 'var(--orange-ink)' }}>
+              {countdown}s
+            </span>
+          </span>
+          <button
+            onClick={() => sync(selectedClient, session)}
+            className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
+            style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
+            ↻ Refresh
+          </button>
           <button
             onClick={logout}
             className="text-[12px] px-3 py-1.5 rounded-lg border"
@@ -187,23 +195,18 @@ export default function Home() {
       </nav>
 
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-6">
-        {!selectedClient ? (
-          <div
-            className="flex flex-col items-center justify-center py-36 gap-4"
-            style={{ color: 'var(--ink-muted)' }}>
-            <ZIcon size={32} color="var(--line-strong)" />
-            <div className="text-[15px]">Select a client workspace from the dropdown above</div>
-          </div>
-        ) : error ? (
+        {error && !current ? (
           <ErrorState message={error} />
-        ) : data ? (
+        ) : isOverview && overview ? (
+          <AdminOverview overview={overview} loading={loading} />
+        ) : !isOverview && data ? (
           <Workspace data={data} loading={loading} />
         ) : (
           <LoadingState />
         )}
       </main>
 
-      {data && <AIAssistant data={data} />}
+      {data && !isOverview && <AIAssistant data={data} />}
     </div>
   )
 }
@@ -405,11 +408,268 @@ const CARD_STYLE = {
   boxShadow: 'var(--shadow-card)',
 }
 
+const PROVIDER_LABEL: Record<ProviderId, string> = {
+  instantly: 'Instantly',
+  smartlead: 'Smartlead',
+}
+
+function ProviderBadge({ provider }: { provider: ProviderId }) {
+  return (
+    <span
+      className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+      style={{ background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }}>
+      {PROVIDER_LABEL[provider]}
+    </span>
+  )
+}
+
+interface Stat {
+  label: string
+  value: string
+  unit?: string
+  sub: string
+  color: string
+}
+
+function StatCards({ stats }: { stats: Stat[] }) {
+  return (
+    <div className="grid grid-cols-5 gap-3 mb-5">
+      {stats.map(s => (
+        <div key={s.label} className="rounded-xl p-5 border" style={CARD_STYLE}>
+          <div
+            className="text-[10px] uppercase tracking-widest font-bold mb-3"
+            style={{ color: 'var(--ink-muted)' }}>
+            {s.label}
+          </div>
+          <div className="text-[28px] font-extrabold font-mono leading-none" style={{ color: s.color }}>
+            {s.value}
+            {s.unit && (
+              <span className="text-[13px] font-normal" style={{ color: 'var(--ink-muted)' }}>
+                {s.unit}
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] mt-1.5" style={{ color: 'var(--ink-muted)' }}>
+            {s.sub}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PageHeading({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="mb-6">
+      <h1 className="text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--ink)' }}>
+        {title}
+      </h1>
+      <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
+        {sub}
+      </p>
+    </div>
+  )
+}
+
+function syncedLabel(loading: boolean, syncedAt: string): string {
+  return loading ? 'Syncing…' : `Last synced ${new Date(syncedAt).toLocaleTimeString()}`
+}
+
+/* ── Admin: every client, every campaign ────────────────────────────────── */
+
+function AdminOverview({ overview, loading }: { overview: OverviewData; loading: boolean }) {
+  const rate = replyRate(overview.totalSent, overview.totalReplies)
+  const failed = overview.clients.filter(c => c.error)
+
+  const stats: Stat[] = [
+    {
+      label: 'Emails Sent',
+      value: overview.totalSent.toLocaleString(),
+      sub: `Across ${overview.clients.length} client${overview.clients.length !== 1 ? 's' : ''}`,
+      color: 'var(--orange-ink)',
+    },
+    {
+      label: 'Reply Rate',
+      value: `${rate.toFixed(1)}%`,
+      sub: `${overview.totalReplies.toLocaleString()} total replies`,
+      color: 'var(--blue-ink)',
+    },
+    {
+      label: 'Active Campaigns',
+      value: String(overview.activeCampaigns),
+      sub: `${overview.campaigns.length} total campaigns`,
+      color: 'var(--blue-ink)',
+    },
+    {
+      label: 'Sending Accounts',
+      value: String(overview.clients.reduce((s, c) => s + c.accountCount, 0)),
+      sub: 'All workspaces',
+      color: 'var(--orange-ink)',
+    },
+    {
+      label: 'Clients',
+      value: String(overview.clients.length),
+      sub: failed.length > 0 ? `${failed.length} failing to sync` : 'All syncing',
+      color: failed.length > 0 ? 'var(--orange-ink)' : 'var(--green-ink)',
+    },
+  ]
+
+  return (
+    <div className="animate-fade-in">
+      <PageHeading title="All Clients" sub={syncedLabel(loading, overview.syncedAt)} />
+
+      <StatCards stats={stats} />
+
+      <div className="rounded-xl p-5 border mb-4" style={CARD_STYLE}>
+        <SectionTitle>Client Breakdown</SectionTitle>
+        <div className="grid grid-cols-3 gap-3">
+          {overview.clients.map(c => (
+            <ClientCard key={c.clientId} client={c} />
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl p-5 border mb-24" style={CARD_STYLE}>
+        <SectionTitle>All Campaigns</SectionTitle>
+        <AllCampaignsTable campaigns={overview.campaigns} />
+      </div>
+    </div>
+  )
+}
+
+function ClientCard({ client }: { client: ClientRollup }) {
+  const rate = replyRate(client.totalSent, client.totalReplies)
+
+  return (
+    <div
+      className="rounded-lg p-4 border"
+      style={{ borderColor: 'var(--line)', background: 'var(--pearl)' }}>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="text-[13px] font-bold truncate" style={{ color: 'var(--ink)' }}>
+          {client.clientName}
+        </div>
+        <ProviderBadge provider={client.provider} />
+      </div>
+
+      {client.error ? (
+        <div className="text-[11px] leading-snug" style={{ color: 'var(--orange-ink)' }}>
+          Sync failed — {client.error}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
+          <Metric label="Sent" value={client.totalSent.toLocaleString()} />
+          <Metric label="Reply rate" value={`${rate.toFixed(1)}%`} accent="var(--blue-ink)" />
+          <Metric label="Active" value={String(client.activeCampaigns)} />
+          <Metric
+            label="Avg warmup"
+            value={client.avgWarmup === undefined ? '—' : String(client.avgWarmup)}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div>
+      <div
+        className="text-[9px] uppercase tracking-widest font-bold mb-0.5"
+        style={{ color: 'var(--ink-muted)' }}>
+        {label}
+      </div>
+      <div
+        className="text-[15px] font-mono font-bold"
+        style={{ color: accent ?? 'var(--ink)' }}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+const ALL_CAMPAIGN_HEADERS = ['Client', 'Campaign', 'Status', 'Leads', 'Sent', 'Replies', 'Reply %']
+
+function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
+  if (campaigns.length === 0) return <Empty>No campaigns across any client</Empty>
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="border-b" style={{ borderColor: 'var(--line-strong)' }}>
+            {ALL_CAMPAIGN_HEADERS.map(h => (
+              <th
+                key={h}
+                className={`py-2.5 px-3 font-bold uppercase tracking-wider text-[10px] ${
+                  h === 'Client' || h === 'Campaign' ? 'text-left' : 'text-right'
+                }`}
+                style={{ color: 'var(--orange-ink)' }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {campaigns.map(c => (
+            <tr
+              key={`${c.clientId}:${c.campaignId}`}
+              className="border-b hover:bg-black/[0.02] transition-colors"
+              style={{ borderColor: 'var(--line)' }}>
+              <td className="py-3 px-3 whitespace-nowrap">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium" style={{ color: 'var(--ink)' }}>
+                    {c.clientName}
+                  </span>
+                  <ProviderBadge provider={c.provider} />
+                </div>
+              </td>
+              <td className="py-3 px-3 max-w-[280px]">
+                <div className="truncate" style={{ color: 'var(--ink-soft)' }}>
+                  {c.campaignName}
+                </div>
+              </td>
+              <td className="py-3 px-3 text-right">
+                <StatusPill active={c.active} />
+              </td>
+              <Cell>{c.leads.toLocaleString()}</Cell>
+              <Cell>{c.sent.toLocaleString()}</Cell>
+              <Cell>{c.replies.toLocaleString()}</Cell>
+              <td
+                className="py-3 px-3 text-right font-mono font-semibold"
+                style={{
+                  color: replyRate(c.sent, c.replies) > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)',
+                }}>
+                {replyRate(c.sent, c.replies).toFixed(1)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+      style={
+        active
+          ? { background: 'rgba(21,128,61,0.1)', color: 'var(--green-ink)' }
+          : { background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }
+      }>
+      {active ? 'Active' : 'Paused'}
+    </span>
+  )
+}
+
+/* ── Single client workspace ────────────────────────────────────────────── */
+
 function Workspace({ data, loading }: { data: DashboardData; loading: boolean }) {
   const rate = replyRate(data.totalSent, data.totalReplies)
   const avgWarmup = averageWarmupScore(data.accounts)
 
-  const stats: { label: string; value: string; unit?: string; sub: string; color: string }[] = [
+  const stats: Stat[] = [
     {
       label: 'Emails Sent',
       value: data.totalSent.toLocaleString(),
@@ -430,14 +690,15 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
     },
     {
       label: 'Unread Emails',
-      value: String(data.unread_count),
-      sub: 'Awaiting reply',
+      // Smartlead exposes no unread count.
+      value: data.unreadCount === undefined ? '—' : String(data.unreadCount),
+      sub: data.unreadCount === undefined ? 'Not reported by provider' : 'Awaiting reply',
       color: 'var(--orange-ink)',
     },
     {
       label: 'Avg Warmup',
-      value: String(avgWarmup),
-      unit: '/100',
+      value: avgWarmup === undefined ? '—' : String(avgWarmup),
+      unit: avgWarmup === undefined ? undefined : '/100',
       sub: `${data.accounts.length} account${data.accounts.length !== 1 ? 's' : ''}`,
       color: 'var(--blue-ink)',
     },
@@ -445,37 +706,19 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6">
-        <h1 className="text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--ink)' }}>
-          {data.clientName} Workspace
-        </h1>
-        <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
-          {loading ? 'Syncing…' : `Last synced ${new Date(data.syncedAt).toLocaleTimeString()}`}
-        </p>
+      <div className="mb-6 flex items-center gap-3">
+        <div>
+          <h1 className="text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--ink)' }}>
+            {data.clientName} Workspace
+          </h1>
+          <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
+            {syncedLabel(loading, data.syncedAt)}
+          </p>
+        </div>
+        <ProviderBadge provider={data.provider} />
       </div>
 
-      <div className="grid grid-cols-5 gap-3 mb-5">
-        {stats.map(s => (
-          <div key={s.label} className="rounded-xl p-5 border" style={CARD_STYLE}>
-            <div
-              className="text-[10px] uppercase tracking-widest font-bold mb-3"
-              style={{ color: 'var(--ink-muted)' }}>
-              {s.label}
-            </div>
-            <div className="text-[28px] font-extrabold font-mono leading-none" style={{ color: s.color }}>
-              {s.value}
-              {s.unit && (
-                <span className="text-[13px] font-normal" style={{ color: 'var(--ink-muted)' }}>
-                  {s.unit}
-                </span>
-              )}
-            </div>
-            <div className="text-[11px] mt-1.5" style={{ color: 'var(--ink-muted)' }}>
-              {s.sub}
-            </div>
-          </div>
-        ))}
-      </div>
+      <StatCards stats={stats} />
 
       <div className="grid grid-cols-5 gap-4 mb-4">
         <div className="col-span-3 rounded-xl p-5 border" style={CARD_STYLE}>
@@ -485,7 +728,7 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
 
         <div className="col-span-2 rounded-xl p-5 border" style={CARD_STYLE}>
           <SectionTitle>Email Accounts</SectionTitle>
-          <WarmupList accounts={data.accounts} />
+          <WarmupList accounts={data.accounts} provider={data.provider} />
         </div>
       </div>
 
@@ -501,26 +744,24 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
   if (data.analytics.length === 0) return <Empty>No campaign data</Empty>
 
   const items = sortByNewest(data.analytics, data.campaigns).slice(0, 8)
-  const maxSent = Math.max(...items.map(a => a.emails_sent_count ?? 0), 1)
+  const maxSent = Math.max(...items.map(a => a.sent), 1)
 
   return (
     <div className="flex flex-col gap-4">
-      {items.map((item, i) => {
-        const sent = item.emails_sent_count ?? 0
-        const replies = item.reply_count ?? 0
-        const rate = replyRate(sent, replies)
+      {items.map(item => {
+        const rate = replyRate(item.sent, item.replies)
 
         return (
-          <div key={item.campaign_id || i}>
+          <div key={item.campaignId}>
             <div className="flex items-center justify-between mb-1.5">
               <div
                 className="text-[12px] font-medium truncate max-w-[55%]"
                 style={{ color: 'var(--ink)' }}>
-                {item.campaign_name || 'Unknown'}
+                {item.campaignName || 'Unknown'}
               </div>
               <div className="flex items-center gap-3 flex-shrink-0 ml-2">
                 <span className="text-[11px] font-mono" style={{ color: 'var(--ink-muted)' }}>
-                  {sent.toLocaleString()}
+                  {item.sent.toLocaleString()}
                 </span>
                 <span
                   className="text-[11px] font-mono font-bold w-12 text-right"
@@ -534,11 +775,11 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
               style={{ background: 'var(--surface-sunken)' }}>
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(sent / maxSent) * 100}%`, background: 'var(--orange-wash)' }}
+                style={{ width: `${(item.sent / maxSent) * 100}%`, background: 'var(--orange-wash)' }}
               />
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(replies / maxSent) * 100}%`, background: 'var(--blue-ink)' }}
+                style={{ width: `${(item.replies / maxSent) * 100}%`, background: 'var(--blue-ink)' }}
               />
             </div>
           </div>
@@ -560,8 +801,8 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
 }
 
 function AccountRow({ account }: { account: EmailAccount }) {
-  const score = account.stat_warmup_score ?? 0
-  const warn = score < WARMUP_THRESHOLD
+  const score = account.warmupScore
+  const warn = score !== undefined && score < WARMUP_THRESHOLD
   const color = warn ? 'var(--orange-ink)' : 'var(--blue-ink)'
 
   return (
@@ -572,18 +813,20 @@ function AccountRow({ account }: { account: EmailAccount }) {
         <div className="text-[11px] font-mono truncate" style={{ color: 'var(--ink-soft)' }}>
           {account.email}
         </div>
-        <div className="text-[10px] mt-0.5 font-medium" style={{ color }}>
-          {warn ? 'Below threshold' : 'Healthy'}
+        <div
+          className="text-[10px] mt-0.5 font-medium"
+          style={{ color: score === undefined ? 'var(--ink-muted)' : color }}>
+          {score === undefined ? 'No warmup data' : warn ? 'Below threshold' : 'Healthy'}
         </div>
       </div>
       <div className="flex items-center gap-2.5 flex-shrink-0 ml-3">
         <div
           className="w-14 h-1.5 rounded-full overflow-hidden"
           style={{ background: 'var(--surface-sunken)' }}>
-          <div className="h-full rounded-full" style={{ width: `${score}%`, background: color }} />
+          <div className="h-full rounded-full" style={{ width: `${score ?? 0}%`, background: color }} />
         </div>
         <div className="text-[12px] font-mono font-bold w-7 text-right" style={{ color }}>
-          {score}
+          {score ?? '—'}
         </div>
       </div>
     </div>
@@ -592,7 +835,7 @@ function AccountRow({ account }: { account: EmailAccount }) {
 
 const VISIBLE_ACCOUNTS = 9
 
-function WarmupList({ accounts }: { accounts: EmailAccount[] }) {
+function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider: ProviderId }) {
   const [expanded, setExpanded] = useState(false)
   if (accounts.length === 0) return <Empty>No accounts found</Empty>
 
@@ -600,6 +843,12 @@ function WarmupList({ accounts }: { accounts: EmailAccount[] }) {
 
   return (
     <div className="flex flex-col">
+      {provider === 'smartlead' && (
+        <div className="text-[10px] mb-2" style={{ color: 'var(--ink-muted)' }}>
+          Score shown is inbox placement — Smartlead reports no 0–100 warmup score.
+        </div>
+      )}
+
       {accounts.slice(0, VISIBLE_ACCOUNTS).map(a => (
         <AccountRow key={a.email} account={a} />
       ))}
@@ -652,23 +901,22 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((a, i) => {
-            const rate = replyRate(a.emails_sent_count ?? 0, a.reply_count ?? 0)
-            const pipeline = a.total_opportunity_value ?? 0
+          {rows.map(a => {
+            const rate = replyRate(a.sent, a.replies)
 
             return (
               <tr
-                key={a.campaign_id || i}
+                key={a.campaignId}
                 className="border-b hover:bg-black/[0.02] transition-colors"
                 style={{ borderColor: 'var(--line)' }}>
                 <td className="py-3 px-3 max-w-[200px]">
                   <div className="truncate font-medium" style={{ color: 'var(--ink)' }}>
-                    {a.campaign_name}
+                    {a.campaignName}
                   </div>
                 </td>
-                <Cell>{(a.leads_count ?? 0).toLocaleString()}</Cell>
-                <Cell>{(a.emails_sent_count ?? 0).toLocaleString()}</Cell>
-                <Cell>{a.reply_count ?? 0}</Cell>
+                <Cell>{a.leads.toLocaleString()}</Cell>
+                <Cell>{a.sent.toLocaleString()}</Cell>
+                <Cell>{a.replies.toLocaleString()}</Cell>
                 <td
                   className="py-3 px-3 text-right font-mono font-semibold"
                   style={{ color: rate > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)' }}>
@@ -676,8 +924,10 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
                 </td>
                 <td
                   className="py-3 px-3 text-right font-mono font-semibold"
-                  style={{ color: pipeline > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
-                  {pipeline > 0 ? `$${pipeline.toLocaleString()}` : '—'}
+                  style={{
+                    color: a.opportunityValue > 0 ? 'var(--green-ink)' : 'var(--ink-muted)',
+                  }}>
+                  {a.opportunityValue > 0 ? `$${a.opportunityValue.toLocaleString()}` : '—'}
                 </td>
               </tr>
             )
@@ -699,6 +949,7 @@ function Cell({ children }: { children: React.ReactNode }) {
 function buildInsights(data: DashboardData): { label: string; value: string; sub: string }[] {
   const rate = replyRate(data.totalSent, data.totalReplies)
   const lowWarmup = countLowWarmup(data.accounts)
+  const avgWarmup = averageWarmupScore(data.accounts)
   const best = topCampaign(data.analytics)
 
   const rateAdvice =
@@ -710,24 +961,30 @@ function buildInsights(data: DashboardData): { label: string; value: string; sub
       ? [
           {
             label: 'Top Campaign',
-            value: `${replyRate(best.emails_sent_count ?? 0, best.reply_count ?? 0).toFixed(1)}%`,
-            sub: best.campaign_name,
+            value: `${replyRate(best.sent, best.replies).toFixed(1)}%`,
+            sub: best.campaignName,
           },
         ]
       : []),
     {
       label: 'Warmup Health',
-      value: `${averageWarmupScore(data.accounts)}/100`,
+      value: avgWarmup === undefined ? '—' : `${avgWarmup}/100`,
       sub:
-        lowWarmup > 0
-          ? `${lowWarmup} account${lowWarmup !== 1 ? 's' : ''} below threshold`
-          : 'All accounts healthy',
+        avgWarmup === undefined
+          ? 'Not reported by provider'
+          : lowWarmup > 0
+            ? `${lowWarmup} account${lowWarmup !== 1 ? 's' : ''} below threshold`
+            : 'All accounts healthy',
     },
-    {
-      label: 'Inbox',
-      value: String(data.unread_count),
-      sub: data.unread_count > 0 ? 'Unread — reply promptly' : 'Clear',
-    },
+    ...(data.unreadCount === undefined
+      ? []
+      : [
+          {
+            label: 'Inbox',
+            value: String(data.unreadCount),
+            sub: data.unreadCount > 0 ? 'Unread — reply promptly' : 'Clear',
+          },
+        ]),
     {
       label: 'Active Campaigns',
       value: String(data.activeCampaigns),

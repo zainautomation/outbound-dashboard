@@ -1,21 +1,44 @@
 # Zutomate Dashboard
 
-Multi-client Instantly outreach dashboard built with Next.js 14 and the Instantly MCP server.
+Multi-client outbound dashboard built with Next.js 14. Each client's workspace is
+backed by either **Instantly** or **Smartlead**, reached over that platform's MCP server.
 
 ## How live data works
 
 ```
-Browser → POST /api/sync → Instantly MCP server (JSON-RPC over SSE) → structured JSON → Browser
+Browser ─┬─ POST /api/sync      (one client)     ─┐
+         └─ POST /api/overview  (all clients)    ─┴─→ provider adapter → MCP server
+                                                        ↓
+                                              normalized JSON → render
 ```
 
-Every 30 seconds the frontend calls `/api/sync`. That route re-validates the
-caller's credentials, opens an MCP session, and calls four tools in parallel —
-`list_campaigns`, `get_campaign_analytics`, `list_accounts`, `count_unread_emails` —
-then returns a single flat payload.
+Every 30 seconds the frontend re-syncs. Routes re-validate credentials on every
+call, then hand off to the provider adapter for that client.
 
-MCP URLs contain Instantly API keys and are only ever read inside API routes;
-they never reach the browser, and they are stripped out of error messages
-before anything is logged or returned.
+MCP URLs contain the platform API key. They are only ever read inside API routes,
+never sent to the browser, and are stripped from error messages before anything
+is logged or returned.
+
+## Providers
+
+Both platforms speak MCP, but almost nothing else about them matches — the
+adapters in `src/lib/providers/` normalize the differences:
+
+| | Instantly | Smartlead |
+|---|---|---|
+| Transport | Streamable HTTP | SSE (long-lived stream) |
+| Auth | key in the URL path | key as a `smartlead_user_api_key` argument |
+| Campaign list | `list_campaigns` | `get_campaigns` |
+| Analytics | `get_campaign_analytics` (all at once) | `get_campaign_analytics` (one call per campaign) |
+| Accounts | `list_accounts` | `get_email_accounts` |
+| Active flag | `status === 1` | `status === "ACTIVE"` |
+| Counts | numbers | strings |
+| Response body | JSON | prose prefix, then JSON |
+| Warmup | `stat_warmup_score` (0–100) | none — derived from inbox placement |
+| Unread count | yes | not exposed |
+
+Adding a third platform means writing one adapter that returns `ProviderData`
+and registering it in `src/lib/providers/index.ts`.
 
 ## Local setup
 
@@ -47,14 +70,18 @@ CLIENT_NEWCLIENT_PASSWORD=their_password
 ```
 
 The `{ID}` segment becomes the client's internal id, lowercased. All four keys
-must be set or the client is skipped.
+must be set or the client is skipped. The provider is inferred from the MCP
+host; override it with `CLIENT_NEWCLIENT_PROVIDER` if needed.
 
 ## Auth
 
 Two roles, validated against env vars only — there is no database.
 
-- **Admin** (`ADMIN_USERNAME` + `ADMIN_PASSWORD`) — switches between all client workspaces.
-- **Client** (`CLIENT_{ID}_USERNAME` + `CLIENT_{ID}_PASSWORD`) — pinned to their own workspace.
+- **Admin** (`ADMIN_USERNAME` + `ADMIN_PASSWORD`) — lands on the **All clients**
+  overview showing every campaign across every workspace, and can drill into any
+  single client.
+- **Client** (`CLIENT_{ID}_USERNAME` + `CLIENT_{ID}_PASSWORD`) — pinned to their
+  own workspace, with no access to the overview.
 
 Admin credentials have no fallback value: if the env vars are unset, admin login
 simply fails.
