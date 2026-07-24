@@ -381,7 +381,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
                 value={pass}
                 onChange={setPass}
                 onEnter={onLogin}
-                placeholder="••••••••"
+                placeholder="Enter your password"
                 type="password"
               />
             </Field>
@@ -435,18 +435,54 @@ function LoginInput({
   placeholder: string
   type?: string
 }) {
+  const [visible, setVisible] = useState(false)
+  const isPassword = type === 'password'
+  const inputType = isPassword ? (visible ? 'text' : 'password') : type
+
   return (
-    <input
-      value={value}
-      type={type}
-      placeholder={placeholder}
-      onChange={e => onChange(e.target.value)}
-      onKeyDown={e => e.key === 'Enter' && onEnter()}
-      className="w-full px-4 py-3 rounded-xl text-[14px] outline-none border transition-all"
-      style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--ink)' }}
-      onFocus={e => (e.target.style.borderColor = 'var(--brand)')}
-      onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
-    />
+    <div className="relative">
+      <input
+        value={value}
+        type={inputType}
+        placeholder={placeholder}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && onEnter()}
+        className={`w-full px-4 py-3 rounded-xl text-[14px] outline-none border transition-all ${
+          isPassword ? 'pr-11' : ''
+        }`}
+        style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--ink)' }}
+        onFocus={e => (e.target.style.borderColor = 'var(--brand)')}
+        onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
+      />
+      {isPassword && (
+        <button
+          type="button"
+          onClick={() => setVisible(v => !v)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 transition-opacity hover:opacity-70"
+          style={{ color: 'var(--ink-muted)' }}
+          aria-label={visible ? 'Hide password' : 'Show password'}>
+          <EyeIcon off={!visible} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+function EyeIcon({ off = false, size = 17 }: { off?: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <line x1="3" y1="3" x2="21" y2="21" />}
+    </svg>
   )
 }
 
