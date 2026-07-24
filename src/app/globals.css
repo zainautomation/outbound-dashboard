@@ -3,31 +3,41 @@
 @tailwind utilities;
 
 :root {
-  /* Surfaces — pearl white */
-  --pearl: #f7f6f3;
+  /* Surfaces — cool pearl white, tuned to sit under navy */
+  --pearl: #f5f6f8;
   --surface: #ffffff;
-  --surface-sunken: #f0eee9;
+  --surface-sunken: #edeff4;
 
-  /* Text — dark navy blue */
-  --ink: #13294d;
-  --ink-soft: #3a4d70;
-  --ink-muted: #566484;
+  /* Brand — dark navy blue is the anchor of the whole system */
+  --brand: #16294a;
+  --brand-deep: #0e1c34;
+  --brand-hover: #22406e;
+  --brand-wash: rgba(22, 41, 74, 0.1);
 
-  /* Hairlines */
-  --line: #e5e2dc;
-  --line-strong: #d5d1c8;
+  /* Text — navy scale */
+  --ink: #16294a;
+  --ink-soft: #42537a;
+  --ink-muted: #6a7593;
 
-  /* Accents — brand orange for fills, deepened for text on light surfaces */
+  /* Hairlines — cool grey */
+  --line: #e5e8ef;
+  --line-strong: #d2d8e4;
+
+  /* Accent — brand orange, used sparingly as a highlight only */
   --orange: #f97316;
-  --orange-ink: #b34a08;
+  --orange-ink: #c2560c;
   --orange-wash: rgba(249, 115, 22, 0.12);
-  --blue-ink: #1d4ed8;
-  --blue-wash: rgba(29, 78, 216, 0.1);
-  --green-ink: #15803d;
 
-  /* Elevation — tinted with the navy ink so shadows read cool, not grey */
-  --shadow-card: 0 1px 2px rgba(19, 41, 77, 0.06);
-  --shadow-pop: 0 16px 40px rgba(19, 41, 77, 0.16);
+  /* Semantic */
+  --green-ink: #15803d;
+  --green-wash: rgba(21, 128, 61, 0.1);
+  --amber-ink: #b45309;
+  --red-ink: #b42318;
+  --red-wash: rgba(180, 35, 24, 0.08);
+
+  /* Elevation — navy-tinted so shadows read cool, not grey */
+  --shadow-card: 0 1px 2px rgba(14, 28, 52, 0.06);
+  --shadow-pop: 0 18px 44px rgba(14, 28, 52, 0.2);
 }
 
 * { box-sizing: border-box; }
@@ -41,15 +51,17 @@ body {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-sunken); }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--orange); }
+::-webkit-scrollbar-thumb:hover { background: var(--brand); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
 @keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+@keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.82)} }
 
 .animate-spin-slow { animation: spin 0.8s linear infinite; }
 .animate-fade-in { animation: fadeIn 0.3s ease forwards; }
 .animate-slide-up { animation: slideUp 0.25s ease forwards; }
+.animate-pulse-dot { animation: pulseDot 1.8s ease-in-out infinite; }
 
 input, select, button { font-family: var(--font-sans), 'Bricolage Grotesque', system-ui, sans-serif; }
 input::placeholder { color: var(--ink-muted); }

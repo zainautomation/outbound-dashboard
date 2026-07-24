@@ -20,6 +20,11 @@ module.exports = {
           strong: 'var(--line-strong)',
         },
         brand: {
+          DEFAULT: 'var(--brand)',
+          deep: 'var(--brand-deep)',
+          hover: 'var(--brand-hover)',
+        },
+        accent: {
           DEFAULT: 'var(--orange)',
           ink: 'var(--orange-ink)',
         },

@@ -120,35 +120,16 @@ export default function Home() {
     )
   }
 
-  const current = isOverview ? overview : data
-
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--pearl)' }}>
       <nav
         className="h-14 flex items-center gap-4 px-6 sticky top-0 z-50 border-b"
         style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
-        <div className="flex items-center gap-2.5 mr-1">
-          <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-            style={{ background: 'var(--orange)' }}>
-            <ZIcon size={14} />
-          </div>
-          <span className="font-bold text-[15px] tracking-tight" style={{ color: 'var(--ink)' }}>
-            Zutomate
-          </span>
-        </div>
+        <BrandMark />
 
         <div className="w-px h-4 mx-1" style={{ background: 'var(--line-strong)' }} />
 
-        <span
-          className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold"
-          style={
-            session.role === 'admin'
-              ? { background: 'var(--orange-wash)', color: 'var(--orange-ink)' }
-              : { background: 'var(--blue-wash)', color: 'var(--blue-ink)' }
-          }>
-          {session.role === 'admin' ? 'Admin' : 'Client'}
-        </span>
+        <RolePill role={session.role} />
 
         {session.role === 'admin' && (
           <select
@@ -174,12 +155,7 @@ export default function Home() {
         )}
 
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>
-            Live ·{' '}
-            <span className="font-mono" style={{ color: 'var(--orange-ink)' }}>
-              {countdown}s
-            </span>
-          </span>
+          <LiveIndicator seconds={countdown} />
           <button
             onClick={() => sync(selectedClient, session)}
             className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
@@ -188,7 +164,7 @@ export default function Home() {
           </button>
           <button
             onClick={logout}
-            className="text-[12px] px-3 py-1.5 rounded-lg border"
+            className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
             style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
             Sign out
           </button>
@@ -196,7 +172,7 @@ export default function Home() {
       </nav>
 
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-6">
-        {error && !current ? (
+        {error && !(isOverview ? overview : data) ? (
           <ErrorState message={error} />
         ) : isOverview && overview ? (
           <AdminOverview overview={overview} loading={loading} />
@@ -212,17 +188,77 @@ export default function Home() {
   )
 }
 
-function ZIcon({ size = 18, color = 'white' }: { size?: number; color?: string }) {
+/* ── Brand ───────────────────────────────────────────────────────────────── */
+
+/** The Zutomate mark — a deep-navy tile with a clean monogram Z. */
+function LogoTile({ size = 28, radius = 9 }: { size?: number; radius?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 18 18" fill="none">
+    <div
+      className="flex items-center justify-center flex-shrink-0"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radius,
+        background: 'linear-gradient(145deg, var(--brand-hover), var(--brand-deep))',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 6px rgba(14,28,52,0.28)',
+      }}>
+      <ZIcon size={size * 0.5} />
+    </div>
+  )
+}
+
+function ZIcon({ size = 14, color = '#ffffff' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <path
-        d="M4 4h10L4 14h10"
+        d="M6.5 6h11L7 18h11"
         stroke={color}
-        strokeWidth="2.5"
+        strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
+  )
+}
+
+function BrandMark() {
+  return (
+    <div className="flex items-center gap-2.5 mr-1">
+      <LogoTile size={28} radius={9} />
+      <span className="font-bold text-[15px] tracking-tight" style={{ color: 'var(--ink)' }}>
+        Zutomate
+      </span>
+    </div>
+  )
+}
+
+function RolePill({ role }: { role: 'admin' | 'user' }) {
+  const admin = role === 'admin'
+  return (
+    <span
+      className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold"
+      style={
+        admin
+          ? { background: 'var(--brand)', color: '#fff' }
+          : { background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }
+      }>
+      {admin ? 'Admin' : 'Client'}
+    </span>
+  )
+}
+
+function LiveIndicator({ seconds }: { seconds: number }) {
+  return (
+    <span className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+      <span
+        className="w-1.5 h-1.5 rounded-full animate-pulse-dot"
+        style={{ background: 'var(--orange)' }}
+      />
+      Live
+      <span className="font-mono" style={{ color: 'var(--ink-soft)' }}>
+        {seconds}s
+      </span>
+    </span>
   )
 }
 
@@ -252,6 +288,8 @@ function DollarBadge({ size = 18 }: { size?: number }) {
   )
 }
 
+/* ── Login ───────────────────────────────────────────────────────────────── */
+
 interface LoginScreenProps {
   user: string
   setUser: (v: string) => void
@@ -264,78 +302,68 @@ interface LoginScreenProps {
 const FEATURES = [
   'Live campaign tracking',
   'Email warmup monitoring',
-  'AI-powered insights',
+  'Positive-reply pipeline',
   'Multi-client workspace',
 ]
 
 function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScreenProps) {
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--pearl)' }}>
+      {/* Deep-navy brand panel */}
       <div
-        className="hidden lg:flex flex-col items-center justify-center w-[42%] relative overflow-hidden"
-        style={{ background: 'var(--surface)', borderRight: '1px solid var(--line)' }}>
+        className="hidden lg:flex flex-col justify-between w-[44%] relative overflow-hidden px-14 py-14"
+        style={{ background: 'var(--brand-deep)' }}>
         <div
           className="absolute inset-0"
           style={{
             backgroundImage:
-              'radial-gradient(ellipse at 30% 35%, rgba(249,115,22,0.14) 0%, transparent 62%)',
+              'radial-gradient(ellipse at 22% 18%, rgba(255,255,255,0.06) 0%, transparent 55%), radial-gradient(ellipse at 85% 90%, rgba(249,115,22,0.12) 0%, transparent 50%)',
           }}
         />
-        <div className="relative z-10 flex flex-col items-center gap-10 px-14 text-center">
-          <div
-            className="w-20 h-20 rounded-3xl flex items-center justify-center"
-            style={{ background: 'var(--orange)' }}>
-            <ZIcon size={40} />
+        <div className="relative z-10">
+          <div className="flex items-center gap-3">
+            <LogoTile size={40} radius={12} />
+            <span className="text-[20px] font-bold tracking-tight text-white">Zutomate</span>
           </div>
-          <div>
-            <div
-              className="text-[34px] font-bold tracking-tight mb-3"
-              style={{ color: 'var(--ink)' }}>
-              Zutomate
+        </div>
+
+        <div className="relative z-10">
+          <div className="text-[30px] leading-tight font-bold text-white mb-3">
+            Your outbound
+            <br />
+            command center.
+          </div>
+          <div className="text-[14px] leading-relaxed max-w-[300px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
+            Every campaign, warmup score and positive reply across all your clients — in one live view.
+          </div>
+        </div>
+
+        <div className="relative z-10 flex flex-col gap-3 max-w-[280px]">
+          {FEATURES.map(f => (
+            <div key={f} className="flex items-center gap-3 text-[13px]" style={{ color: 'rgba(255,255,255,0.82)' }}>
+              <span
+                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(249,115,22,0.18)' }}>
+                <span style={{ color: 'var(--orange)', fontSize: 9 }}>✓</span>
+              </span>
+              {f}
             </div>
-            <div
-              className="text-[14px] leading-relaxed max-w-[260px]"
-              style={{ color: 'var(--ink-soft)' }}>
-              Your outbound command center.
-              <br />
-              Real-time insights, zero guesswork.
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 text-left w-full max-w-[260px]">
-            {FEATURES.map(f => (
-              <div
-                key={f}
-                className="flex items-center gap-3 text-[13px]"
-                style={{ color: 'var(--ink-soft)' }}>
-                <div
-                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'var(--orange-wash)' }}>
-                  <span style={{ color: 'var(--orange-ink)', fontSize: 9 }}>✓</span>
-                </div>
-                {f}
-              </div>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
 
+      {/* Form */}
       <div className="flex-1 flex items-center justify-center px-8">
         <div className="w-full max-w-[380px]">
           <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: 'var(--orange)' }}>
-              <ZIcon size={18} />
-            </div>
+            <LogoTile size={36} radius={11} />
             <span className="text-[22px] font-bold" style={{ color: 'var(--ink)' }}>
               Zutomate
             </span>
           </div>
 
           <div className="mb-8">
-            <h1
-              className="text-[28px] font-bold tracking-tight mb-1.5"
-              style={{ color: 'var(--ink)' }}>
+            <h1 className="text-[28px] font-bold tracking-tight mb-1.5" style={{ color: 'var(--ink)' }}>
               Welcome back
             </h1>
             <p className="text-[14px]" style={{ color: 'var(--ink-soft)' }}>
@@ -345,12 +373,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
 
           <div className="flex flex-col gap-4">
             <Field label="Username">
-              <LoginInput
-                value={user}
-                onChange={setUser}
-                onEnter={onLogin}
-                placeholder="Enter your username"
-              />
+              <LoginInput value={user} onChange={setUser} onEnter={onLogin} placeholder="Enter your username" />
             </Field>
 
             <Field label="Password">
@@ -366,19 +389,17 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
             {error && (
               <div
                 className="px-4 py-3 rounded-xl text-[13px]"
-                style={{
-                  background: 'var(--orange-wash)',
-                  border: '1px solid rgba(249,115,22,0.25)',
-                  color: 'var(--orange-ink)',
-                }}>
+                style={{ background: 'var(--red-wash)', border: '1px solid rgba(180,35,24,0.2)', color: 'var(--red-ink)' }}>
                 {error}
               </div>
             )}
 
             <button
               onClick={onLogin}
-              className="w-full py-3.5 rounded-xl text-[14px] font-bold text-white transition-opacity hover:opacity-90 mt-1"
-              style={{ background: 'var(--orange-ink)' }}>
+              className="w-full py-3.5 rounded-xl text-[14px] font-bold text-white transition-colors mt-1"
+              style={{ background: 'var(--brand)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--brand-hover)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'var(--brand)')}>
               Sign in →
             </button>
           </div>
@@ -423,11 +444,13 @@ function LoginInput({
       onKeyDown={e => e.key === 'Enter' && onEnter()}
       className="w-full px-4 py-3 rounded-xl text-[14px] outline-none border transition-all"
       style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--ink)' }}
-      onFocus={e => (e.target.style.borderColor = 'var(--orange)')}
+      onFocus={e => (e.target.style.borderColor = 'var(--brand)')}
       onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
     />
   )
 }
+
+/* ── Shared building blocks ──────────────────────────────────────────────── */
 
 const CARD_STYLE = {
   background: 'var(--surface)',
@@ -466,9 +489,7 @@ function StatCards({ stats }: { stats: Stat[] }) {
       {stats.map(s => (
         <div key={s.label} className="rounded-xl p-5 border" style={CARD_STYLE}>
           <div className="flex items-center justify-between mb-3">
-            <div
-              className="text-[10px] uppercase tracking-widest font-bold"
-              style={{ color: 'var(--ink-muted)' }}>
+            <div className="text-[10px] uppercase tracking-widest font-bold" style={{ color: 'var(--ink-muted)' }}>
               {s.label}
             </div>
             {s.badge && <DollarBadge size={16} />}
@@ -490,15 +511,18 @@ function StatCards({ stats }: { stats: Stat[] }) {
   )
 }
 
-function PageHeading({ title, sub }: { title: string; sub: string }) {
+function PageHeading({ title, sub, right }: { title: string; sub: string; right?: React.ReactNode }) {
   return (
-    <div className="mb-6">
-      <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
-        {title}
-      </h1>
-      <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
-        {sub}
-      </p>
+    <div className="mb-6 flex items-center gap-3">
+      <div>
+        <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
+          {title}
+        </h1>
+        <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
+          {sub}
+        </p>
+      </div>
+      {right}
     </div>
   )
 }
@@ -507,7 +531,22 @@ function syncedLabel(loading: boolean, syncedAt: string): string {
   return loading ? 'Syncing…' : `Last synced ${new Date(syncedAt).toLocaleTimeString()}`
 }
 
-/* ── Admin: every client, every campaign ────────────────────────────────── */
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 mb-4">
+      {/* small orange tick — the one deliberate brand accent */}
+      <span className="w-[3px] h-3.5 rounded-full flex-shrink-0" style={{ background: 'var(--orange)' }} />
+      <span
+        className="text-[10px] uppercase tracking-widest font-bold"
+        style={{ color: 'var(--ink-soft)' }}>
+        {children}
+      </span>
+      <div className="flex-1 h-px" style={{ background: 'var(--line)' }} />
+    </div>
+  )
+}
+
+/* ── Admin: every client, every campaign ─────────────────────────────────── */
 
 function AdminOverview({ overview, loading }: { overview: OverviewData; loading: boolean }) {
   const rate = replyRate(overview.totalSent, overview.totalReplies)
@@ -519,21 +558,18 @@ function AdminOverview({ overview, loading }: { overview: OverviewData; loading:
       label: 'Emails Sent',
       value: overview.totalSent.toLocaleString(),
       sub: `Across ${overview.clients.length} client${overview.clients.length !== 1 ? 's' : ''}`,
-      color: 'var(--orange-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Reply Rate',
       value: `${rate.toFixed(1)}%`,
       sub: `${overview.totalReplies.toLocaleString()} total replies`,
-      color: 'var(--blue-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Positive Replies',
       value: overview.totalPositiveReplies.toLocaleString(),
-      sub:
-        overview.totalPipeline > 0
-          ? `$${overview.totalPipeline.toLocaleString()} pipeline`
-          : 'Interested leads',
+      sub: overview.totalPipeline > 0 ? `$${overview.totalPipeline.toLocaleString()} pipeline` : 'Interested leads',
       color: 'var(--green-ink)',
       badge: true,
     },
@@ -541,19 +577,19 @@ function AdminOverview({ overview, loading }: { overview: OverviewData; loading:
       label: 'Bounce Rate',
       value: `${bounce.toFixed(1)}%`,
       sub: `${overview.totalBounces.toLocaleString()} bounced`,
-      color: bounce > 5 ? 'var(--orange-ink)' : 'var(--ink)',
+      color: bounce > 5 ? 'var(--amber-ink)' : 'var(--ink)',
     },
     {
       label: 'Active Campaigns',
       value: String(overview.activeCampaigns),
       sub: `${overview.campaigns.length} total campaigns`,
-      color: 'var(--blue-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Clients',
       value: String(overview.clients.length),
       sub: failed.length > 0 ? `${failed.length} failing to sync` : 'All syncing',
-      color: failed.length > 0 ? 'var(--orange-ink)' : 'var(--green-ink)',
+      color: failed.length > 0 ? 'var(--amber-ink)' : 'var(--green-ink)',
     },
   ]
 
@@ -584,9 +620,7 @@ function ClientCard({ client }: { client: ClientRollup }) {
   const rate = replyRate(client.totalSent, client.totalReplies)
 
   return (
-    <div
-      className="rounded-lg p-4 border"
-      style={{ borderColor: 'var(--line)', background: 'var(--pearl)' }}>
+    <div className="rounded-lg p-4 border" style={{ borderColor: 'var(--line)', background: 'var(--pearl)' }}>
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="text-[13px] font-bold truncate" style={{ color: 'var(--ink)' }}>
           {client.clientName}
@@ -595,28 +629,17 @@ function ClientCard({ client }: { client: ClientRollup }) {
       </div>
 
       {client.error ? (
-        <div className="text-[11px] leading-snug" style={{ color: 'var(--orange-ink)' }}>
+        <div className="text-[11px] leading-snug" style={{ color: 'var(--red-ink)' }}>
           Sync failed — {client.error}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
           <Metric label="Sent" value={client.totalSent.toLocaleString()} />
-          <Metric label="Reply rate" value={`${rate.toFixed(1)}%`} accent="var(--blue-ink)" />
-          <Metric
-            label="Positive"
-            value={client.totalPositiveReplies.toLocaleString()}
-            accent="var(--green-ink)"
-            badge
-          />
-          <Metric
-            label="Bounce rate"
-            value={`${bounceRate(client.totalSent, client.totalBounces).toFixed(1)}%`}
-          />
+          <Metric label="Reply rate" value={`${rate.toFixed(1)}%`} />
+          <Metric label="Positive" value={client.totalPositiveReplies.toLocaleString()} accent="var(--green-ink)" badge />
+          <Metric label="Bounce rate" value={`${bounceRate(client.totalSent, client.totalBounces).toFixed(1)}%`} />
           <Metric label="Active" value={String(client.activeCampaigns)} />
-          <Metric
-            label="Avg warmup"
-            value={client.avgWarmup === undefined ? '—' : String(client.avgWarmup)}
-          />
+          <Metric label="Avg warmup" value={client.avgWarmup === undefined ? '—' : String(client.avgWarmup)} />
         </div>
       )}
     </div>
@@ -649,16 +672,7 @@ function Metric({
   )
 }
 
-const ALL_CAMPAIGN_HEADERS = [
-  'Client',
-  'Campaign',
-  'Status',
-  'Leads',
-  'Sent',
-  'Replies',
-  'Positive',
-  'Reply %',
-]
+const ALL_CAMPAIGN_HEADERS = ['Client', 'Campaign', 'Status', 'Leads', 'Sent', 'Replies', 'Positive', 'Reply %']
 
 function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
   if (campaigns.length === 0) return <Empty>No campaigns across any client</Empty>
@@ -674,7 +688,7 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
                 className={`py-2.5 px-3 font-bold uppercase tracking-wider text-[10px] ${
                   h === 'Client' || h === 'Campaign' ? 'text-left' : 'text-right'
                 }`}
-                style={{ color: 'var(--orange-ink)' }}>
+                style={{ color: 'var(--ink-soft)' }}>
                 {h}
               </th>
             ))}
@@ -684,7 +698,7 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
           {campaigns.map(c => (
             <tr
               key={`${c.clientId}:${c.campaignId}`}
-              className="border-b hover:bg-black/[0.02] transition-colors"
+              className="border-b hover:bg-black/[0.015] transition-colors"
               style={{ borderColor: 'var(--line)' }}>
               <td className="py-3 px-3 whitespace-nowrap">
                 <div className="flex items-center gap-2">
@@ -710,11 +724,7 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
                 style={{ color: c.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
                 {c.positiveReplies.toLocaleString()}
               </td>
-              <td
-                className="py-3 px-3 text-right font-mono font-semibold"
-                style={{
-                  color: replyRate(c.sent, c.replies) > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)',
-                }}>
+              <td className="py-3 px-3 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
                 {replyRate(c.sent, c.replies).toFixed(1)}%
               </td>
             </tr>
@@ -731,7 +741,7 @@ function StatusPill({ active }: { active: boolean }) {
       className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
       style={
         active
-          ? { background: 'rgba(21,128,61,0.1)', color: 'var(--green-ink)' }
+          ? { background: 'var(--green-wash)', color: 'var(--green-ink)' }
           : { background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }
       }>
       {active ? 'Active' : 'Paused'}
@@ -739,7 +749,7 @@ function StatusPill({ active }: { active: boolean }) {
   )
 }
 
-/* ── Single client workspace ────────────────────────────────────────────── */
+/* ── Single client workspace ─────────────────────────────────────────────── */
 
 function Workspace({ data, loading }: { data: DashboardData; loading: boolean }) {
   const rate = replyRate(data.totalSent, data.totalReplies)
@@ -751,21 +761,18 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
       label: 'Emails Sent',
       value: data.totalSent.toLocaleString(),
       sub: `${data.activeCampaigns} active campaign${data.activeCampaigns !== 1 ? 's' : ''}`,
-      color: 'var(--orange-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Reply Rate',
       value: `${rate.toFixed(1)}%`,
       sub: `${data.totalReplies.toLocaleString()} total replies`,
-      color: 'var(--blue-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Positive Replies',
       value: data.totalPositiveReplies.toLocaleString(),
-      sub:
-        data.totalPipeline > 0
-          ? `$${data.totalPipeline.toLocaleString()} pipeline`
-          : 'Interested leads',
+      sub: data.totalPipeline > 0 ? `$${data.totalPipeline.toLocaleString()} pipeline` : 'Interested leads',
       color: 'var(--green-ink)',
       badge: true,
     },
@@ -773,37 +780,31 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
       label: 'Bounce Rate',
       value: `${bounce.toFixed(1)}%`,
       sub: `${data.totalBounces.toLocaleString()} bounced`,
-      color: bounce > 5 ? 'var(--orange-ink)' : 'var(--ink)',
+      color: bounce > 5 ? 'var(--amber-ink)' : 'var(--ink)',
     },
     {
       label: 'Unread Emails',
       // Smartlead exposes no unread count.
       value: data.unreadCount === undefined ? '—' : String(data.unreadCount),
       sub: data.unreadCount === undefined ? 'Not reported' : 'Awaiting reply',
-      color: 'var(--orange-ink)',
+      color: 'var(--ink)',
     },
     {
       label: 'Avg Warmup',
       value: avgWarmup === undefined ? '—' : String(avgWarmup),
       unit: avgWarmup === undefined ? undefined : '/100',
       sub: `${data.accounts.length} account${data.accounts.length !== 1 ? 's' : ''}`,
-      color: 'var(--blue-ink)',
+      color: 'var(--ink)',
     },
   ]
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6 flex items-center gap-3">
-        <div>
-          <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
-            {data.clientName} Workspace
-          </h1>
-          <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
-            {syncedLabel(loading, data.syncedAt)}
-          </p>
-        </div>
-        <ProviderBadge provider={data.provider} />
-      </div>
+      <PageHeading
+        title={`${data.clientName} Workspace`}
+        sub={syncedLabel(loading, data.syncedAt)}
+        right={<ProviderBadge provider={data.provider} />}
+      />
 
       <StatCards stats={stats} />
 
@@ -841,9 +842,7 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
         return (
           <div key={item.campaignId}>
             <div className="flex items-center justify-between mb-1.5">
-              <div
-                className="text-[12px] font-medium truncate max-w-[55%]"
-                style={{ color: 'var(--ink)' }}>
+              <div className="text-[12px] font-medium truncate max-w-[55%]" style={{ color: 'var(--ink)' }}>
                 {item.campaignName || 'Unknown'}
               </div>
               <div className="flex items-center gap-3 flex-shrink-0 ml-2">
@@ -852,21 +851,19 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
                 </span>
                 <span
                   className="text-[11px] font-mono font-bold w-12 text-right"
-                  style={{ color: rate > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)' }}>
+                  style={{ color: rate > 0 ? 'var(--ink)' : 'var(--ink-muted)' }}>
                   {rate.toFixed(1)}%
                 </span>
               </div>
             </div>
-            <div
-              className="relative h-2 rounded-full overflow-hidden"
-              style={{ background: 'var(--surface-sunken)' }}>
+            <div className="relative h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(item.sent / maxSent) * 100}%`, background: 'var(--orange-wash)' }}
+                style={{ width: `${(item.sent / maxSent) * 100}%`, background: 'var(--brand-wash)' }}
               />
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(item.replies / maxSent) * 100}%`, background: 'var(--blue-ink)' }}
+                style={{ width: `${(item.replies / maxSent) * 100}%`, background: 'var(--brand)' }}
               />
             </div>
           </div>
@@ -875,11 +872,11 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
 
       <div className="flex items-center gap-5 mt-1 text-[11px]" style={{ color: 'var(--ink-muted)' }}>
         <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--orange-wash)' }} />
+          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--brand-wash)' }} />
           Sent
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--blue-ink)' }} />
+          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--brand)' }} />
           Replies
         </div>
       </div>
@@ -890,12 +887,10 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
 function AccountRow({ account }: { account: EmailAccount }) {
   const score = account.warmupScore
   const warn = score !== undefined && score < WARMUP_THRESHOLD
-  const color = warn ? 'var(--orange-ink)' : 'var(--blue-ink)'
+  const color = warn ? 'var(--amber-ink)' : 'var(--brand)'
 
   return (
-    <div
-      className="flex items-center justify-between py-2.5 border-b last:border-0"
-      style={{ borderColor: 'var(--line)' }}>
+    <div className="flex items-center justify-between py-2.5 border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
       <div className="min-w-0 flex-1">
         <div className="text-[11px] font-mono truncate" style={{ color: 'var(--ink-soft)' }}>
           {account.email}
@@ -907,9 +902,7 @@ function AccountRow({ account }: { account: EmailAccount }) {
         </div>
       </div>
       <div className="flex items-center gap-2.5 flex-shrink-0 ml-3">
-        <div
-          className="w-14 h-1.5 rounded-full overflow-hidden"
-          style={{ background: 'var(--surface-sunken)' }}>
+        <div className="w-14 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
           <div className="h-full rounded-full" style={{ width: `${score ?? 0}%`, background: color }} />
         </div>
         <div className="text-[12px] font-mono font-bold w-7 text-right" style={{ color }}>
@@ -954,8 +947,8 @@ function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider
       {extra.length > 0 && (
         <button
           onClick={() => setExpanded(e => !e)}
-          className="text-[11px] pt-3 text-left transition-opacity hover:opacity-70"
-          style={{ color: expanded ? 'var(--ink-muted)' : 'var(--orange-ink)' }}>
+          className="text-[11px] pt-3 text-left font-medium transition-opacity hover:opacity-70"
+          style={{ color: expanded ? 'var(--ink-muted)' : 'var(--brand)' }}>
           {expanded ? '↑ Show less' : `+${extra.length} more accounts`}
         </button>
       )}
@@ -981,7 +974,7 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
                 className={`py-2.5 px-3 font-bold uppercase tracking-wider text-[10px] ${
                   h === 'Campaign' ? 'text-left' : 'text-right'
                 }`}
-                style={{ color: 'var(--orange-ink)' }}>
+                style={{ color: 'var(--ink-soft)' }}>
                 {h}
               </th>
             ))}
@@ -994,7 +987,7 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
             return (
               <tr
                 key={a.campaignId}
-                className="border-b hover:bg-black/[0.02] transition-colors"
+                className="border-b hover:bg-black/[0.015] transition-colors"
                 style={{ borderColor: 'var(--line)' }}>
                 <td className="py-3 px-3 max-w-[200px]">
                   <div className="truncate font-medium" style={{ color: 'var(--ink)' }}>
@@ -1009,16 +1002,12 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
                   style={{ color: a.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
                   {a.positiveReplies.toLocaleString()}
                 </td>
-                <td
-                  className="py-3 px-3 text-right font-mono font-semibold"
-                  style={{ color: rate > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)' }}>
+                <td className="py-3 px-3 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
                   {rate.toFixed(1)}%
                 </td>
                 <td
                   className="py-3 px-3 text-right font-mono font-semibold"
-                  style={{
-                    color: a.opportunityValue > 0 ? 'var(--green-ink)' : 'var(--ink-muted)',
-                  }}>
+                  style={{ color: a.opportunityValue > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
                   {a.opportunityValue > 0 ? `$${a.opportunityValue.toLocaleString()}` : '—'}
                 </td>
               </tr>
@@ -1052,10 +1041,7 @@ function buildInsights(data: DashboardData): { label: string; value: string; sub
     {
       label: 'Positive Replies',
       value: data.totalPositiveReplies.toLocaleString(),
-      sub:
-        data.totalPipeline > 0
-          ? `$${data.totalPipeline.toLocaleString()} in pipeline`
-          : 'Interested leads',
+      sub: data.totalPipeline > 0 ? `$${data.totalPipeline.toLocaleString()} in pipeline` : 'Interested leads',
     },
     ...(best
       ? [
@@ -1101,26 +1087,20 @@ function AIAssistant({ data }: { data: DashboardData }) {
       {open && (
         <div
           className="w-[320px] rounded-xl overflow-hidden animate-slide-up border"
-          style={{
-            background: 'var(--surface)',
-            borderColor: 'var(--line)',
-            boxShadow: 'var(--shadow-pop)',
-          }}>
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', boxShadow: 'var(--shadow-pop)' }}>
           <div
-            className="flex items-center justify-between px-5 py-3.5 border-b"
-            style={{ borderColor: 'var(--line)', background: 'var(--surface-sunken)' }}>
+            className="flex items-center justify-between px-5 py-3.5"
+            style={{ background: 'var(--brand-deep)' }}>
             <div>
-              <div className="text-[13px] font-bold" style={{ color: 'var(--ink)' }}>
-                Zutomate AI
-              </div>
-              <div className="text-[10px]" style={{ color: 'var(--ink-muted)' }}>
+              <div className="text-[13px] font-bold text-white">Zutomate AI</div>
+              <div className="text-[10px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
                 Live insights
               </div>
             </div>
             <button
               onClick={() => setOpen(false)}
               className="text-[18px] leading-none transition-opacity hover:opacity-60"
-              style={{ color: 'var(--ink-muted)' }}>
+              style={{ color: 'rgba(255,255,255,0.7)' }}>
               ×
             </button>
           </div>
@@ -1132,18 +1112,14 @@ function AIAssistant({ data }: { data: DashboardData }) {
                 className="flex items-center justify-between py-2.5 border-b last:border-0"
                 style={{ borderColor: 'var(--line)' }}>
                 <div>
-                  <div
-                    className="text-[10px] uppercase tracking-widest font-bold mb-0.5"
-                    style={{ color: 'var(--ink-muted)' }}>
+                  <div className="text-[10px] uppercase tracking-widest font-bold mb-0.5" style={{ color: 'var(--ink-muted)' }}>
                     {item.label}
                   </div>
                   <div className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>
                     {item.sub}
                   </div>
                 </div>
-                <div
-                  className="text-[16px] font-bold font-mono"
-                  style={{ color: 'var(--orange-ink)' }}>
+                <div className="text-[16px] font-bold font-mono" style={{ color: 'var(--ink)' }}>
                   {item.value}
                 </div>
               </div>
@@ -1160,35 +1136,20 @@ function AIAssistant({ data }: { data: DashboardData }) {
 
       <button
         onClick={() => setOpen(!open)}
-        className="w-12 h-12 rounded-xl flex items-center justify-center text-[18px] transition-all hover:scale-105 active:scale-95 font-bold text-white"
-        style={{ background: 'var(--orange-ink)', boxShadow: '0 4px 20px rgba(179,74,8,0.3)' }}>
+        className="w-12 h-12 rounded-xl flex items-center justify-center text-[16px] transition-all hover:scale-105 active:scale-95 font-bold text-white"
+        style={{ background: 'var(--brand)', boxShadow: '0 6px 20px rgba(14,28,52,0.35)' }}>
         {open ? '×' : 'AI'}
       </button>
     </div>
   )
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 mb-4">
-      <span
-        className="text-[10px] uppercase tracking-widest font-bold"
-        style={{ color: 'var(--orange-ink)' }}>
-        {children}
-      </span>
-      <div className="flex-1 h-px" style={{ background: 'var(--line)' }} />
-    </div>
-  )
-}
-
 function LoadingState() {
   return (
-    <div
-      className="flex flex-col items-center justify-center py-36 gap-4"
-      style={{ color: 'var(--ink-muted)' }}>
+    <div className="flex flex-col items-center justify-center py-36 gap-4" style={{ color: 'var(--ink-muted)' }}>
       <div
         className="w-6 h-6 rounded-full border-2 animate-spin-slow"
-        style={{ borderColor: 'var(--line-strong)', borderTopColor: 'var(--orange)' }}
+        style={{ borderColor: 'var(--line-strong)', borderTopColor: 'var(--brand)' }}
       />
       <div className="text-[13px]">Syncing…</div>
     </div>
@@ -1198,7 +1159,7 @@ function LoadingState() {
 function ErrorState({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-36 gap-2">
-      <div className="text-[14px] font-semibold" style={{ color: 'var(--orange-ink)' }}>
+      <div className="text-[14px] font-semibold" style={{ color: 'var(--red-ink)' }}>
         Sync failed
       </div>
       <div className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>

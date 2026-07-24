@@ -108,36 +108,44 @@ per-client errors and reports them in that client's rollup.
 
 ## Design System
 
-Light theme: **pearl white surfaces, dark navy-blue text.** Colors are CSS
-variables in `globals.css` and mirrored in `tailwind.config.js` — always use
-them, never hardcode hex values in new UI.
+Light theme, **dark navy blue is the brand anchor** on cool pearl-white
+surfaces; orange is a sparing accent only. Colors are CSS variables in
+`globals.css`, mirrored in `tailwind.config.js` — always use them, never
+hardcode hex in new UI.
 
 | Variable | Use |
 |---|---|
-| `var(--pearl)` | Page background |
+| `var(--pearl)` | Page background (cool white) |
 | `var(--surface)` | Cards, nav (white, raised) |
-| `var(--surface-sunken)` | Inputs, progress tracks |
-| `var(--ink)` | Primary text (dark navy `#13294d`) |
-| `var(--ink-soft)` | Secondary text |
-| `var(--ink-muted)` | Labels, meta |
+| `var(--surface-sunken)` | Inputs, progress tracks, neutral pills |
+| `var(--brand)` | Primary — logo, CTA buttons, chart replies, AI button (navy `#16294a`) |
+| `var(--brand-deep)` | Login brand panel, AI header (deepest navy) |
+| `var(--brand-hover)` | Button hover, logo gradient top |
+| `var(--brand-wash)` | Pale-navy chart "sent" fill |
+| `var(--ink)` / `--ink-soft` / `--ink-muted` | Navy text scale (primary numbers use `--ink`) |
 | `var(--line)` / `var(--line-strong)` | Hairlines, borders |
-| `var(--orange)` | Brand fills — logo tile, decorative bars |
-| `var(--orange-ink)` | Orange **text** and CTA fills on light surfaces |
-| `var(--blue-ink)` | Reply-rate metrics |
-| `var(--green-ink)` | Positive replies, pipeline $, healthy states |
+| `var(--orange)` / `--orange-ink` | **Accent only** — live dot, section-title tick, login feature ticks |
+| `var(--green-ink)` / `--green-wash` | Positive replies, pipeline $, healthy, Active pill |
+| `var(--amber-ink)` | Elevated bounce rate, below-threshold warmup |
+| `var(--red-ink)` / `--red-wash` | Errors, failed sync |
 
-Orange splits deliberately: `--orange` (#f97316) is vivid enough for fills but
-only hits ~2.6:1 on pearl, so anything that renders as text or carries white
-text uses `--orange-ink` (#b34a08, ~5:1). Do not use `--orange` for text.
+**Navy is dominant; orange is a jewel accent.** The previous design leaned
+orange (logo, every CTA, all section titles, key numbers) and read as generic —
+that was deliberately pulled back. Do not reintroduce orange as a fill for
+logos, buttons, or primary numbers. Its only sanctioned uses are the `LiveIndicator`
+dot, the small tick in `SectionTitle`, and the login feature ticks.
 
 **Positive replies** (Instantly opportunities / Smartlead "interested") are
 always green with the `DollarBadge` — a green coin with a `$`. That badge is the
 one place the dollar motif appears; keep it tied to positive-reply figures.
 
+The logo is `LogoTile` — a deep-navy gradient squircle with a white monogram Z
+(`ZIcon`), used at every size. Login uses a full-height `--brand-deep` panel.
+
 Fonts: `Bricolage Grotesque` (UI, `--font-sans`, the Zutomate brand font),
 `DM Mono` (numbers, emails, `--font-mono`). Headings use `font-bold` (700) —
-deliberately not `extrabold`. Section titles are `--orange-ink`, uppercase,
-`tracking-widest`, then a hairline.
+deliberately not `extrabold`. Section titles are navy (`--ink-soft`), uppercase,
+`tracking-widest`, led by an orange tick and followed by a hairline.
 
 ## What Does Not Exist Yet
 
