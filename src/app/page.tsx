@@ -5,10 +5,8 @@ import {
   WARMUP_THRESHOLD,
   averageWarmupScore,
   bounceRate,
-  countLowWarmup,
   replyRate,
   sortByNewest,
-  topCampaign,
 } from '@/lib/metrics'
 import type {
   AttributedCampaign,
@@ -30,9 +28,7 @@ export default function Home() {
   const [selectedClient, setSelectedClient] = useState(ALL_CLIENTS)
   const [data, setData] = useState<DashboardData | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [countdown, setCountdown] = useState(SYNC_SECONDS)
   const intervalRef = useRef<ReturnType<typeof setInterval>>()
 
   const [authUser, setAuthUser] = useState('')
@@ -63,12 +59,10 @@ export default function Home() {
     setData(null)
     setOverview(null)
     setSelectedClient(ALL_CLIENTS)
-    setCountdown(SYNC_SECONDS)
   }
 
   const sync = useCallback(async (clientId: string, sess: Session) => {
     const wantsOverview = sess.role === 'admin' && clientId === ALL_CLIENTS
-    setLoading(true)
     setError('')
     try {
       const body = { role: sess.role, username: sess.username, password: sess.password }
@@ -83,8 +77,6 @@ export default function Home() {
       else setData(json)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
-    } finally {
-      setLoading(false)
     }
   }, [])
 
@@ -94,15 +86,11 @@ export default function Home() {
     if (session.role === 'user' && !selectedClient) return
 
     sync(selectedClient, session)
-    setCountdown(SYNC_SECONDS)
 
+    // Auto-refresh in the background — no visible countdown.
     intervalRef.current = setInterval(() => {
-      setCountdown(c => {
-        if (c > 1) return c - 1
-        sync(selectedClient, session)
-        return SYNC_SECONDS
-      })
-    }, 1000)
+      sync(selectedClient, session)
+    }, SYNC_SECONDS * 1000)
 
     return () => clearInterval(intervalRef.current)
   }, [selectedClient, session, sync])
@@ -155,7 +143,6 @@ export default function Home() {
         )}
 
         <div className="ml-auto flex items-center gap-3">
-          <LiveIndicator seconds={countdown} />
           <button
             onClick={() => sync(selectedClient, session)}
             className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
@@ -175,15 +162,13 @@ export default function Home() {
         {error && !(isOverview ? overview : data) ? (
           <ErrorState message={error} />
         ) : isOverview && overview ? (
-          <AdminOverview overview={overview} loading={loading} />
+          <AdminOverview overview={overview} />
         ) : !isOverview && data ? (
-          <Workspace data={data} loading={loading} />
+          <Workspace data={data} />
         ) : (
           <LoadingState />
         )}
       </main>
-
-      {data && !isOverview && <AIAssistant data={data} />}
     </div>
   )
 }
@@ -243,21 +228,6 @@ function RolePill({ role }: { role: 'admin' | 'user' }) {
           : { background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }
       }>
       {admin ? 'Admin' : 'Client'}
-    </span>
-  )
-}
-
-function LiveIndicator({ seconds }: { seconds: number }) {
-  return (
-    <span className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
-      <span
-        className="w-1.5 h-1.5 rounded-full animate-pulse-dot"
-        style={{ background: 'var(--orange)' }}
-      />
-      Live
-      <span className="font-mono" style={{ color: 'var(--ink-soft)' }}>
-        {seconds}s
-      </span>
     </span>
   )
 }
@@ -547,24 +517,15 @@ function StatCards({ stats }: { stats: Stat[] }) {
   )
 }
 
-function PageHeading({ title, sub, right }: { title: string; sub: string; right?: React.ReactNode }) {
+function PageHeading({ title, right }: { title: string; right?: React.ReactNode }) {
   return (
     <div className="mb-6 flex items-center gap-3">
-      <div>
-        <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
-          {title}
-        </h1>
-        <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
-          {sub}
-        </p>
-      </div>
+      <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
+        {title}
+      </h1>
       {right}
     </div>
   )
-}
-
-function syncedLabel(loading: boolean, syncedAt: string): string {
-  return loading ? 'Syncing…' : `Last synced ${new Date(syncedAt).toLocaleTimeString()}`
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -584,7 +545,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 /* ── Admin: every client, every campaign ─────────────────────────────────── */
 
-function AdminOverview({ overview, loading }: { overview: OverviewData; loading: boolean }) {
+function AdminOverview({ overview }: { overview: OverviewData }) {
   const rate = replyRate(overview.totalSent, overview.totalReplies)
   const bounce = bounceRate(overview.totalSent, overview.totalBounces)
   const failed = overview.clients.filter(c => c.error)
@@ -631,7 +592,7 @@ function AdminOverview({ overview, loading }: { overview: OverviewData; loading:
 
   return (
     <div className="animate-fade-in">
-      <PageHeading title="All Clients" sub={syncedLabel(loading, overview.syncedAt)} />
+      <PageHeading title="All Clients" />
 
       <StatCards stats={stats} />
 
@@ -787,7 +748,7 @@ function StatusPill({ active }: { active: boolean }) {
 
 /* ── Single client workspace ─────────────────────────────────────────────── */
 
-function Workspace({ data, loading }: { data: DashboardData; loading: boolean }) {
+function Workspace({ data }: { data: DashboardData }) {
   const rate = replyRate(data.totalSent, data.totalReplies)
   const bounce = bounceRate(data.totalSent, data.totalBounces)
   const avgWarmup = averageWarmupScore(data.accounts)
@@ -838,7 +799,6 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
     <div className="animate-fade-in">
       <PageHeading
         title={`${data.clientName} Workspace`}
-        sub={syncedLabel(loading, data.syncedAt)}
         right={<ProviderBadge provider={data.provider} />}
       />
 
@@ -1060,123 +1020,6 @@ function Cell({ children }: { children: React.ReactNode }) {
     <td className="py-3 px-3 text-right font-mono" style={{ color: 'var(--ink-soft)' }}>
       {children}
     </td>
-  )
-}
-
-function buildInsights(data: DashboardData): { label: string; value: string; sub: string }[] {
-  const rate = replyRate(data.totalSent, data.totalReplies)
-  const lowWarmup = countLowWarmup(data.accounts)
-  const avgWarmup = averageWarmupScore(data.accounts)
-  const best = topCampaign(data.analytics)
-
-  const rateAdvice =
-    rate > 5 ? 'Strong performance' : rate > 2 ? 'Test your subject lines' : 'Review messaging & targeting'
-
-  return [
-    { label: 'Reply Rate', value: `${rate.toFixed(1)}%`, sub: rateAdvice },
-    {
-      label: 'Positive Replies',
-      value: data.totalPositiveReplies.toLocaleString(),
-      sub: data.totalPipeline > 0 ? `$${data.totalPipeline.toLocaleString()} in pipeline` : 'Interested leads',
-    },
-    ...(best
-      ? [
-          {
-            label: 'Top Campaign',
-            value: `${replyRate(best.sent, best.replies).toFixed(1)}%`,
-            sub: best.campaignName,
-          },
-        ]
-      : []),
-    {
-      label: 'Warmup Health',
-      value: avgWarmup === undefined ? '—' : `${avgWarmup}/100`,
-      sub:
-        avgWarmup === undefined
-          ? 'Not reported by provider'
-          : lowWarmup > 0
-            ? `${lowWarmup} account${lowWarmup !== 1 ? 's' : ''} below threshold`
-            : 'All accounts healthy',
-    },
-    ...(data.unreadCount === undefined
-      ? []
-      : [
-          {
-            label: 'Inbox',
-            value: String(data.unreadCount),
-            sub: data.unreadCount > 0 ? 'Unread — reply promptly' : 'Clear',
-          },
-        ]),
-    {
-      label: 'Active Campaigns',
-      value: String(data.activeCampaigns),
-      sub: `${data.accounts.length} sending accounts`,
-    },
-  ]
-}
-
-function AIAssistant({ data }: { data: DashboardData }) {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
-      {open && (
-        <div
-          className="w-[320px] rounded-xl overflow-hidden animate-slide-up border"
-          style={{ background: 'var(--surface)', borderColor: 'var(--line)', boxShadow: 'var(--shadow-pop)' }}>
-          <div
-            className="flex items-center justify-between px-5 py-3.5"
-            style={{ background: 'var(--brand-deep)' }}>
-            <div>
-              <div className="text-[13px] font-bold text-white">Zutomate AI</div>
-              <div className="text-[10px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                Live insights
-              </div>
-            </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="text-[18px] leading-none transition-opacity hover:opacity-60"
-              style={{ color: 'rgba(255,255,255,0.7)' }}>
-              ×
-            </button>
-          </div>
-
-          <div className="px-4 py-3 flex flex-col gap-2">
-            {buildInsights(data).map(item => (
-              <div
-                key={item.label}
-                className="flex items-center justify-between py-2.5 border-b last:border-0"
-                style={{ borderColor: 'var(--line)' }}>
-                <div>
-                  <div className="text-[10px] uppercase tracking-widest font-bold mb-0.5" style={{ color: 'var(--ink-muted)' }}>
-                    {item.label}
-                  </div>
-                  <div className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>
-                    {item.sub}
-                  </div>
-                </div>
-                <div className="text-[16px] font-bold font-mono" style={{ color: 'var(--ink)' }}>
-                  {item.value}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="px-5 py-2.5 border-t text-[10px] text-center"
-            style={{ borderColor: 'var(--line)', color: 'var(--ink-muted)' }}>
-            Synced {new Date(data.syncedAt).toLocaleTimeString()}
-          </div>
-        </div>
-      )}
-
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-12 h-12 rounded-xl flex items-center justify-center text-[16px] transition-all hover:scale-105 active:scale-95 font-bold text-white"
-        style={{ background: 'var(--brand)', boxShadow: '0 6px 20px rgba(14,28,52,0.35)' }}>
-        {open ? '×' : 'AI'}
-      </button>
-    </div>
   )
 }
 
