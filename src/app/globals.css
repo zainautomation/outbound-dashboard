@@ -8,10 +8,10 @@
   --surface: #ffffff;
   --surface-sunken: #f0eee9;
 
-  /* Text — charcoal */
-  --ink: #23262b;
-  --ink-soft: #4a5058;
-  --ink-muted: #656c75;
+  /* Text — dark navy blue */
+  --ink: #13294d;
+  --ink-soft: #3a4d70;
+  --ink-muted: #566484;
 
   /* Hairlines */
   --line: #e5e2dc;
@@ -25,9 +25,9 @@
   --blue-wash: rgba(29, 78, 216, 0.1);
   --green-ink: #15803d;
 
-  /* Elevation */
-  --shadow-card: 0 1px 2px rgba(35, 38, 43, 0.05);
-  --shadow-pop: 0 16px 40px rgba(35, 38, 43, 0.14);
+  /* Elevation — tinted with the navy ink so shadows read cool, not grey */
+  --shadow-card: 0 1px 2px rgba(19, 41, 77, 0.06);
+  --shadow-pop: 0 16px 40px rgba(19, 41, 77, 0.16);
 }
 
 * { box-sizing: border-box; }
@@ -35,7 +35,7 @@
 body {
   background: var(--pearl);
   color: var(--ink);
-  font-family: var(--font-sans), 'Bricolage Grotesque', sans-serif;
+  font-family: var(--font-sans), 'Manrope', system-ui, sans-serif;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -51,5 +51,5 @@ body {
 .animate-fade-in { animation: fadeIn 0.3s ease forwards; }
 .animate-slide-up { animation: slideUp 0.25s ease forwards; }
 
-input, select, button { font-family: var(--font-sans), 'Bricolage Grotesque', sans-serif; }
+input, select, button { font-family: var(--font-sans), 'Manrope', system-ui, sans-serif; }
 input::placeholder { color: var(--ink-muted); }

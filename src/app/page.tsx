@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   WARMUP_THRESHOLD,
   averageWarmupScore,
+  bounceRate,
   countLowWarmup,
   replyRate,
   sortByNewest,
@@ -132,7 +133,7 @@ export default function Home() {
             style={{ background: 'var(--orange)' }}>
             <ZIcon size={14} />
           </div>
-          <span className="font-extrabold text-[15px] tracking-tight" style={{ color: 'var(--ink)' }}>
+          <span className="font-bold text-[15px] tracking-tight" style={{ color: 'var(--ink)' }}>
             Zutomate
           </span>
         </div>
@@ -225,6 +226,32 @@ function ZIcon({ size = 18, color = 'white' }: { size?: number; color?: string }
   )
 }
 
+function DollarSign({ size = 12, color = 'white' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <line x1="12" y1="1.5" x2="12" y2="22.5" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+      <path
+        d="M17 6.5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"
+        stroke={color}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** Green coin badge used to mark positive-reply (opportunity) figures. */
+function DollarBadge({ size = 18 }: { size?: number }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-full flex-shrink-0"
+      style={{ width: size, height: size, background: 'var(--green-ink)' }}>
+      <DollarSign size={size * 0.58} color="white" />
+    </span>
+  )
+}
+
 interface LoginScreenProps {
   user: string
   setUser: (v: string) => void
@@ -262,7 +289,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
           </div>
           <div>
             <div
-              className="text-[34px] font-extrabold tracking-tight mb-3"
+              className="text-[34px] font-bold tracking-tight mb-3"
               style={{ color: 'var(--ink)' }}>
               Zutomate
             </div>
@@ -300,14 +327,14 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
               style={{ background: 'var(--orange)' }}>
               <ZIcon size={18} />
             </div>
-            <span className="text-[22px] font-extrabold" style={{ color: 'var(--ink)' }}>
+            <span className="text-[22px] font-bold" style={{ color: 'var(--ink)' }}>
               Zutomate
             </span>
           </div>
 
           <div className="mb-8">
             <h1
-              className="text-[28px] font-extrabold tracking-tight mb-1.5"
+              className="text-[28px] font-bold tracking-tight mb-1.5"
               style={{ color: 'var(--ink)' }}>
               Welcome back
             </h1>
@@ -429,19 +456,24 @@ interface Stat {
   unit?: string
   sub: string
   color: string
+  /** Shows the green dollar badge — used for positive replies (opportunities). */
+  badge?: boolean
 }
 
 function StatCards({ stats }: { stats: Stat[] }) {
   return (
-    <div className="grid grid-cols-5 gap-3 mb-5">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
       {stats.map(s => (
         <div key={s.label} className="rounded-xl p-5 border" style={CARD_STYLE}>
-          <div
-            className="text-[10px] uppercase tracking-widest font-bold mb-3"
-            style={{ color: 'var(--ink-muted)' }}>
-            {s.label}
+          <div className="flex items-center justify-between mb-3">
+            <div
+              className="text-[10px] uppercase tracking-widest font-bold"
+              style={{ color: 'var(--ink-muted)' }}>
+              {s.label}
+            </div>
+            {s.badge && <DollarBadge size={16} />}
           </div>
-          <div className="text-[28px] font-extrabold font-mono leading-none" style={{ color: s.color }}>
+          <div className="text-[26px] font-bold font-mono leading-none" style={{ color: s.color }}>
             {s.value}
             {s.unit && (
               <span className="text-[13px] font-normal" style={{ color: 'var(--ink-muted)' }}>
@@ -461,7 +493,7 @@ function StatCards({ stats }: { stats: Stat[] }) {
 function PageHeading({ title, sub }: { title: string; sub: string }) {
   return (
     <div className="mb-6">
-      <h1 className="text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--ink)' }}>
+      <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
         {title}
       </h1>
       <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
@@ -479,6 +511,7 @@ function syncedLabel(loading: boolean, syncedAt: string): string {
 
 function AdminOverview({ overview, loading }: { overview: OverviewData; loading: boolean }) {
   const rate = replyRate(overview.totalSent, overview.totalReplies)
+  const bounce = bounceRate(overview.totalSent, overview.totalBounces)
   const failed = overview.clients.filter(c => c.error)
 
   const stats: Stat[] = [
@@ -495,16 +528,26 @@ function AdminOverview({ overview, loading }: { overview: OverviewData; loading:
       color: 'var(--blue-ink)',
     },
     {
+      label: 'Positive Replies',
+      value: overview.totalPositiveReplies.toLocaleString(),
+      sub:
+        overview.totalPipeline > 0
+          ? `$${overview.totalPipeline.toLocaleString()} pipeline`
+          : 'Interested leads',
+      color: 'var(--green-ink)',
+      badge: true,
+    },
+    {
+      label: 'Bounce Rate',
+      value: `${bounce.toFixed(1)}%`,
+      sub: `${overview.totalBounces.toLocaleString()} bounced`,
+      color: bounce > 5 ? 'var(--orange-ink)' : 'var(--ink)',
+    },
+    {
       label: 'Active Campaigns',
       value: String(overview.activeCampaigns),
       sub: `${overview.campaigns.length} total campaigns`,
       color: 'var(--blue-ink)',
-    },
-    {
-      label: 'Sending Accounts',
-      value: String(overview.clients.reduce((s, c) => s + c.accountCount, 0)),
-      sub: 'All workspaces',
-      color: 'var(--orange-ink)',
     },
     {
       label: 'Clients',
@@ -559,6 +602,16 @@ function ClientCard({ client }: { client: ClientRollup }) {
         <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
           <Metric label="Sent" value={client.totalSent.toLocaleString()} />
           <Metric label="Reply rate" value={`${rate.toFixed(1)}%`} accent="var(--blue-ink)" />
+          <Metric
+            label="Positive"
+            value={client.totalPositiveReplies.toLocaleString()}
+            accent="var(--green-ink)"
+            badge
+          />
+          <Metric
+            label="Bounce rate"
+            value={`${bounceRate(client.totalSent, client.totalBounces).toFixed(1)}%`}
+          />
           <Metric label="Active" value={String(client.activeCampaigns)} />
           <Metric
             label="Avg warmup"
@@ -570,24 +623,42 @@ function ClientCard({ client }: { client: ClientRollup }) {
   )
 }
 
-function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function Metric({
+  label,
+  value,
+  accent,
+  badge,
+}: {
+  label: string
+  value: string
+  accent?: string
+  badge?: boolean
+}) {
   return (
     <div>
       <div
-        className="text-[9px] uppercase tracking-widest font-bold mb-0.5"
+        className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-bold mb-0.5"
         style={{ color: 'var(--ink-muted)' }}>
         {label}
+        {badge && <DollarBadge size={12} />}
       </div>
-      <div
-        className="text-[15px] font-mono font-bold"
-        style={{ color: accent ?? 'var(--ink)' }}>
+      <div className="text-[15px] font-mono font-bold" style={{ color: accent ?? 'var(--ink)' }}>
         {value}
       </div>
     </div>
   )
 }
 
-const ALL_CAMPAIGN_HEADERS = ['Client', 'Campaign', 'Status', 'Leads', 'Sent', 'Replies', 'Reply %']
+const ALL_CAMPAIGN_HEADERS = [
+  'Client',
+  'Campaign',
+  'Status',
+  'Leads',
+  'Sent',
+  'Replies',
+  'Positive',
+  'Reply %',
+]
 
 function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
   if (campaigns.length === 0) return <Empty>No campaigns across any client</Empty>
@@ -636,6 +707,11 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
               <Cell>{c.replies.toLocaleString()}</Cell>
               <td
                 className="py-3 px-3 text-right font-mono font-semibold"
+                style={{ color: c.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
+                {c.positiveReplies.toLocaleString()}
+              </td>
+              <td
+                className="py-3 px-3 text-right font-mono font-semibold"
                 style={{
                   color: replyRate(c.sent, c.replies) > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)',
                 }}>
@@ -667,6 +743,7 @@ function StatusPill({ active }: { active: boolean }) {
 
 function Workspace({ data, loading }: { data: DashboardData; loading: boolean }) {
   const rate = replyRate(data.totalSent, data.totalReplies)
+  const bounce = bounceRate(data.totalSent, data.totalBounces)
   const avgWarmup = averageWarmupScore(data.accounts)
 
   const stats: Stat[] = [
@@ -679,20 +756,30 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
     {
       label: 'Reply Rate',
       value: `${rate.toFixed(1)}%`,
-      sub: `${data.totalReplies} total replies`,
+      sub: `${data.totalReplies.toLocaleString()} total replies`,
       color: 'var(--blue-ink)',
     },
     {
-      label: 'Total Replies',
-      value: data.totalReplies.toLocaleString(),
-      sub: 'Across all campaigns',
-      color: 'var(--blue-ink)',
+      label: 'Positive Replies',
+      value: data.totalPositiveReplies.toLocaleString(),
+      sub:
+        data.totalPipeline > 0
+          ? `$${data.totalPipeline.toLocaleString()} pipeline`
+          : 'Interested leads',
+      color: 'var(--green-ink)',
+      badge: true,
+    },
+    {
+      label: 'Bounce Rate',
+      value: `${bounce.toFixed(1)}%`,
+      sub: `${data.totalBounces.toLocaleString()} bounced`,
+      color: bounce > 5 ? 'var(--orange-ink)' : 'var(--ink)',
     },
     {
       label: 'Unread Emails',
       // Smartlead exposes no unread count.
       value: data.unreadCount === undefined ? '—' : String(data.unreadCount),
-      sub: data.unreadCount === undefined ? 'Not reported by provider' : 'Awaiting reply',
+      sub: data.unreadCount === undefined ? 'Not reported' : 'Awaiting reply',
       color: 'var(--orange-ink)',
     },
     {
@@ -708,7 +795,7 @@ function Workspace({ data, loading }: { data: DashboardData; loading: boolean })
     <div className="animate-fade-in">
       <div className="mb-6 flex items-center gap-3">
         <div>
-          <h1 className="text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--ink)' }}>
+          <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
             {data.clientName} Workspace
           </h1>
           <p className="text-[12px] mt-1" style={{ color: 'var(--ink-muted)' }}>
@@ -876,7 +963,7 @@ function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider
   )
 }
 
-const TABLE_HEADERS = ['Campaign', 'Leads', 'Sent', 'Replies', 'Reply %', 'Pipeline']
+const TABLE_HEADERS = ['Campaign', 'Leads', 'Sent', 'Replies', 'Positive', 'Reply %', 'Pipeline']
 
 function AnalyticsTable({ data }: { data: DashboardData }) {
   if (data.analytics.length === 0) return <Empty>No analytics data</Empty>
@@ -919,6 +1006,11 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
                 <Cell>{a.replies.toLocaleString()}</Cell>
                 <td
                   className="py-3 px-3 text-right font-mono font-semibold"
+                  style={{ color: a.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
+                  {a.positiveReplies.toLocaleString()}
+                </td>
+                <td
+                  className="py-3 px-3 text-right font-mono font-semibold"
                   style={{ color: rate > 0 ? 'var(--blue-ink)' : 'var(--ink-muted)' }}>
                   {rate.toFixed(1)}%
                 </td>
@@ -957,6 +1049,14 @@ function buildInsights(data: DashboardData): { label: string; value: string; sub
 
   return [
     { label: 'Reply Rate', value: `${rate.toFixed(1)}%`, sub: rateAdvice },
+    {
+      label: 'Positive Replies',
+      value: data.totalPositiveReplies.toLocaleString(),
+      sub:
+        data.totalPipeline > 0
+          ? `$${data.totalPipeline.toLocaleString()} in pipeline`
+          : 'Interested leads',
+    },
     ...(best
       ? [
           {
@@ -1042,7 +1142,7 @@ function AIAssistant({ data }: { data: DashboardData }) {
                   </div>
                 </div>
                 <div
-                  className="text-[16px] font-extrabold font-mono"
+                  className="text-[16px] font-bold font-mono"
                   style={{ color: 'var(--orange-ink)' }}>
                   {item.value}
                 </div>
@@ -1072,7 +1172,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 mb-4">
       <span
-        className="text-[10px] uppercase tracking-widest font-extrabold"
+        className="text-[10px] uppercase tracking-widest font-bold"
         style={{ color: 'var(--orange-ink)' }}>
         {children}
       </span>

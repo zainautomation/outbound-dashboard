@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorizeAdmin, redact } from '@/lib/authorize'
-import { averageWarmupScore } from '@/lib/metrics'
+import { averageWarmupScore, sumAnalytics } from '@/lib/metrics'
 import { fetchProviderData } from '@/lib/providers'
 import type { AttributedCampaign, ClientRollup, OverviewData } from '@/lib/types'
 
@@ -43,8 +43,7 @@ export async function POST(req: NextRequest) {
 
           const rollup: ClientRollup = {
             ...identity,
-            totalSent: data.analytics.reduce((s, a) => s + a.sent, 0),
-            totalReplies: data.analytics.reduce((s, a) => s + a.replies, 0),
+            ...sumAnalytics(data.analytics),
             activeCampaigns: data.campaigns.filter(c => c.active).length,
             accountCount: data.accounts.length,
             avgWarmup: averageWarmupScore(data.accounts),
@@ -56,6 +55,9 @@ export async function POST(req: NextRequest) {
             ...identity,
             totalSent: 0,
             totalReplies: 0,
+            totalPositiveReplies: 0,
+            totalBounces: 0,
+            totalPipeline: 0,
             activeCampaigns: 0,
             accountCount: 0,
             error: redact(err instanceof Error ? err.message : 'Sync failed'),
@@ -73,6 +75,9 @@ export async function POST(req: NextRequest) {
       campaigns,
       totalSent: rollups.reduce((s, c) => s + c.totalSent, 0),
       totalReplies: rollups.reduce((s, c) => s + c.totalReplies, 0),
+      totalPositiveReplies: rollups.reduce((s, c) => s + c.totalPositiveReplies, 0),
+      totalBounces: rollups.reduce((s, c) => s + c.totalBounces, 0),
+      totalPipeline: rollups.reduce((s, c) => s + c.totalPipeline, 0),
       activeCampaigns: rollups.reduce((s, c) => s + c.activeCampaigns, 0),
       syncedAt: new Date().toISOString(),
     }

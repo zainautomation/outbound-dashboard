@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorizeClient, redact } from '@/lib/authorize'
+import { sumAnalytics } from '@/lib/metrics'
 import { fetchProviderData } from '@/lib/providers'
 import type { DashboardData } from '@/lib/types'
 
@@ -19,11 +20,10 @@ export async function POST(req: NextRequest) {
 
     const data: DashboardData = {
       ...provider,
+      ...sumAnalytics(provider.analytics),
       clientId: client.id,
       clientName: client.name,
       provider: client.provider,
-      totalSent: provider.analytics.reduce((s, a) => s + a.sent, 0),
-      totalReplies: provider.analytics.reduce((s, a) => s + a.replies, 0),
       activeCampaigns: provider.campaigns.filter(c => c.active).length,
       syncedAt: new Date().toISOString(),
     }

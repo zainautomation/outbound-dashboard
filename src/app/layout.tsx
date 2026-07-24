@@ -1,11 +1,13 @@
 import type { Metadata } from 'next'
-import { Bricolage_Grotesque, DM_Mono } from 'next/font/google'
+import { Manrope, DM_Mono } from 'next/font/google'
 import './globals.css'
 
-const bricolage = Bricolage_Grotesque({
+// Clean, modern grotesque matching the Zutomate site — kept to moderate
+// weights so headings read confident, not heavy.
+const sans = Manrope({
   subsets: ['latin'],
   variable: '--font-sans',
-  weight: ['300', '400', '500', '600', '700', '800'],
+  weight: ['400', '500', '600', '700', '800'],
 })
 
 const dmMono = DM_Mono({
@@ -22,7 +24,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${bricolage.variable} ${dmMono.variable}`}>
+      <body className={`${sans.variable} ${dmMono.variable}`}>
         {children}
       </body>
     </html>

@@ -14,6 +14,9 @@ interface InstantlyAnalytics {
   leads_count?: number
   emails_sent_count?: number
   reply_count?: number
+  bounced_count?: number
+  /** Leads marked interested; each carries an opportunity value. */
+  total_opportunities?: number
   total_opportunity_value?: number
 }
 
@@ -51,6 +54,8 @@ export async function fetchInstantly(mcpUrl: string): Promise<ProviderData> {
         leads: num(a.leads_count),
         sent: num(a.emails_sent_count),
         replies: num(a.reply_count),
+        positiveReplies: num(a.total_opportunities),
+        bounces: num(a.bounced_count),
         opportunityValue: num(a.total_opportunity_value),
       })),
       accounts: (accountsRes.items ?? []).map(a => ({

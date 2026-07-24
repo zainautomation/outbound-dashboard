@@ -14,7 +14,13 @@ interface SmartleadAnalytics {
   name: string
   sent_count?: string | number
   reply_count?: string | number
+  bounce_count?: string | number
   total_count?: string | number
+  /** Interested leads and their revenue live in the lead-stats block. */
+  campaign_lead_stats?: {
+    interested?: string | number
+    revenue?: string | number
+  }
 }
 
 interface SmartleadAccount {
@@ -100,7 +106,9 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
             leads: num(a.total_count),
             sent: num(a.sent_count),
             replies: num(a.reply_count),
-            opportunityValue: 0,
+            positiveReplies: num(a.campaign_lead_stats?.interested),
+            bounces: num(a.bounce_count),
+            opportunityValue: num(a.campaign_lead_stats?.revenue),
           }
         } catch {
           // One bad campaign should not blank the whole workspace.

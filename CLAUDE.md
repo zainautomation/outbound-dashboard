@@ -98,7 +98,7 @@ a stray leading space in a NAME reaches the UI otherwise.
 - `src/lib/authorize.ts` — credential checks and `redact()`
 - `src/lib/clients.ts` — env-var client registry
 - `src/lib/types.ts` — types shared between API routes and UI
-- `src/lib/metrics.ts` — reply rate, warmup averages, sorting
+- `src/lib/metrics.ts` — reply/bounce rate, warmup averages, sorting, `sumAnalytics()` totals
 
 Derived metrics belong in `src/lib/metrics.ts`, not inline in a component —
 `Workspace`, `AdminOverview` and `AIAssistant` all consume them.
@@ -108,30 +108,36 @@ per-client errors and reports them in that client's rollup.
 
 ## Design System
 
-Light theme: **pearl white surfaces, charcoal text.** Colors are CSS variables in
-`globals.css` and mirrored in `tailwind.config.js` — always use them, never
-hardcode hex values in new UI.
+Light theme: **pearl white surfaces, dark navy-blue text.** Colors are CSS
+variables in `globals.css` and mirrored in `tailwind.config.js` — always use
+them, never hardcode hex values in new UI.
 
 | Variable | Use |
 |---|---|
 | `var(--pearl)` | Page background |
 | `var(--surface)` | Cards, nav (white, raised) |
 | `var(--surface-sunken)` | Inputs, progress tracks |
-| `var(--ink)` | Primary text (charcoal) |
+| `var(--ink)` | Primary text (dark navy `#13294d`) |
 | `var(--ink-soft)` | Secondary text |
 | `var(--ink-muted)` | Labels, meta |
 | `var(--line)` / `var(--line-strong)` | Hairlines, borders |
 | `var(--orange)` | Brand fills — logo tile, decorative bars |
 | `var(--orange-ink)` | Orange **text** and CTA fills on light surfaces |
-| `var(--blue-ink)` / `var(--green-ink)` | Reply metrics / pipeline and healthy states |
+| `var(--blue-ink)` | Reply-rate metrics |
+| `var(--green-ink)` | Positive replies, pipeline $, healthy states |
 
 Orange splits deliberately: `--orange` (#f97316) is vivid enough for fills but
 only hits ~2.6:1 on pearl, so anything that renders as text or carries white
 text uses `--orange-ink` (#b34a08, ~5:1). Do not use `--orange` for text.
 
-Fonts: `Bricolage Grotesque` (UI, `--font-sans`), `DM Mono` (numbers, emails,
-`--font-mono`). Section titles are `--orange-ink`, uppercase, `tracking-widest`,
-followed by a hairline rule.
+**Positive replies** (Instantly opportunities / Smartlead "interested") are
+always green with the `DollarBadge` — a green coin with a `$`. That badge is the
+one place the dollar motif appears; keep it tied to positive-reply figures.
+
+Fonts: `Manrope` (UI, `--font-sans`), `DM Mono` (numbers, emails, `--font-mono`).
+Manrope is a close match for the Zutomate site; swapping it is a one-line change
+in `layout.tsx`. Headings use `font-bold` (700) — deliberately not `extrabold`.
+Section titles are `--orange-ink`, uppercase, `tracking-widest`, then a hairline.
 
 ## What Does Not Exist Yet
 

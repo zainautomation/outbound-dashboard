@@ -3,8 +3,34 @@ import type { Campaign, CampaignAnalytics, EmailAccount } from './types'
 /** Warmup scores below this are surfaced as unhealthy. */
 export const WARMUP_THRESHOLD = 95
 
+export interface Totals {
+  totalSent: number
+  totalReplies: number
+  totalPositiveReplies: number
+  totalBounces: number
+  totalPipeline: number
+}
+
+/** Sums the per-campaign figures both data routes report. */
+export function sumAnalytics(analytics: CampaignAnalytics[]): Totals {
+  return analytics.reduce<Totals>(
+    (t, a) => ({
+      totalSent: t.totalSent + a.sent,
+      totalReplies: t.totalReplies + a.replies,
+      totalPositiveReplies: t.totalPositiveReplies + a.positiveReplies,
+      totalBounces: t.totalBounces + a.bounces,
+      totalPipeline: t.totalPipeline + a.opportunityValue,
+    }),
+    { totalSent: 0, totalReplies: 0, totalPositiveReplies: 0, totalBounces: 0, totalPipeline: 0 },
+  )
+}
+
 export function replyRate(sent: number, replies: number): number {
   return sent > 0 ? (replies / sent) * 100 : 0
+}
+
+export function bounceRate(sent: number, bounces: number): number {
+  return sent > 0 ? (bounces / sent) * 100 : 0
 }
 
 /** Averages only accounts the provider reported a score for. */

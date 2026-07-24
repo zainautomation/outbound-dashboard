@@ -23,7 +23,10 @@ export interface CampaignAnalytics {
   leads: number
   sent: number
   replies: number
-  /** Pipeline value, where the provider reports one. */
+  /** Leads marked interested — Instantly opportunities, Smartlead "interested". */
+  positiveReplies: number
+  bounces: number
+  /** Pipeline value attached to positive replies, where the provider reports one. */
   opportunityValue: number
 }
 
@@ -52,6 +55,9 @@ export interface DashboardData extends ProviderData {
   provider: ProviderId
   totalSent: number
   totalReplies: number
+  totalPositiveReplies: number
+  totalBounces: number
+  totalPipeline: number
   activeCampaigns: number
   syncedAt: string
 }
@@ -63,6 +69,9 @@ export interface ClientRollup {
   provider: ProviderId
   totalSent: number
   totalReplies: number
+  totalPositiveReplies: number
+  totalBounces: number
+  totalPipeline: number
   activeCampaigns: number
   accountCount: number
   avgWarmup?: number
@@ -85,6 +94,9 @@ export interface OverviewData {
   campaigns: AttributedCampaign[]
   totalSent: number
   totalReplies: number
+  totalPositiveReplies: number
+  totalBounces: number
+  totalPipeline: number
   activeCampaigns: number
   syncedAt: string
 }
