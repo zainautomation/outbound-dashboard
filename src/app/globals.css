@@ -35,7 +35,7 @@
 body {
   background: var(--pearl);
   color: var(--ink);
-  font-family: var(--font-sans), 'Manrope', system-ui, sans-serif;
+  font-family: var(--font-sans), 'Bricolage Grotesque', system-ui, sans-serif;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -51,5 +51,5 @@ body {
 .animate-fade-in { animation: fadeIn 0.3s ease forwards; }
 .animate-slide-up { animation: slideUp 0.25s ease forwards; }
 
-input, select, button { font-family: var(--font-sans), 'Manrope', system-ui, sans-serif; }
+input, select, button { font-family: var(--font-sans), 'Bricolage Grotesque', system-ui, sans-serif; }
 input::placeholder { color: var(--ink-muted); }

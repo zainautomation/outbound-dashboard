@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import { Manrope, DM_Mono } from 'next/font/google'
+import { Bricolage_Grotesque, DM_Mono } from 'next/font/google'
 import './globals.css'
 
-// Clean, modern grotesque matching the Zutomate site — kept to moderate
-// weights so headings read confident, not heavy.
-const sans = Manrope({
+// The Zutomate brand font. Headings use bold (700), not extrabold, so it
+// reads confident rather than heavy.
+const sans = Bricolage_Grotesque({
   subsets: ['latin'],
   variable: '--font-sans',
   weight: ['400', '500', '600', '700', '800'],

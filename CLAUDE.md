@@ -134,10 +134,10 @@ text uses `--orange-ink` (#b34a08, ~5:1). Do not use `--orange` for text.
 always green with the `DollarBadge` — a green coin with a `$`. That badge is the
 one place the dollar motif appears; keep it tied to positive-reply figures.
 
-Fonts: `Manrope` (UI, `--font-sans`), `DM Mono` (numbers, emails, `--font-mono`).
-Manrope is a close match for the Zutomate site; swapping it is a one-line change
-in `layout.tsx`. Headings use `font-bold` (700) — deliberately not `extrabold`.
-Section titles are `--orange-ink`, uppercase, `tracking-widest`, then a hairline.
+Fonts: `Bricolage Grotesque` (UI, `--font-sans`, the Zutomate brand font),
+`DM Mono` (numbers, emails, `--font-mono`). Headings use `font-bold` (700) —
+deliberately not `extrabold`. Section titles are `--orange-ink`, uppercase,
+`tracking-widest`, then a hairline.
 
 ## What Does Not Exist Yet
 
