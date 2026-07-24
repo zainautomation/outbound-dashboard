@@ -1,5 +1,8 @@
-.env.local
-.env
+# Any env file with real values — never commit these.
+.env*
+# ...except the committed placeholder template.
+!.env.example
+
 node_modules/
 .next/
 out/
