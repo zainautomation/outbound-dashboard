@@ -391,7 +391,6 @@ function Hero({
 }) {
   return (
     <section className="relative overflow-hidden" style={{ background: 'var(--navy)' }}>
-      <div className="absolute inset-0 navy-grid" />
       <div
         className="absolute inset-0"
         style={{
@@ -450,9 +449,8 @@ function LoginScreen({ user, setUser, pass, setPass, error, busy, onLogin }: Log
     <div className="min-h-screen flex" style={{ background: 'var(--pearl)' }}>
       {/* Navy brand panel */}
       <div
-        className="hidden lg:flex flex-col justify-between w-[48%] relative overflow-hidden px-14 py-12"
+        className="hidden lg:flex flex-col justify-between gap-14 w-[48%] relative overflow-hidden px-14 py-12"
         style={{ background: 'var(--navy)' }}>
-        <div className="absolute inset-0 navy-grid" />
         <div
           className="absolute inset-0"
           style={{
@@ -480,7 +478,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, busy, onLogin }: Log
             One live view of every campaign, reply and sending inbox Zutomate runs for you.
           </p>
 
-          <div className="mt-10 flex flex-col gap-5">
+          <div className="mt-12 flex flex-col gap-7">
             {FEATURES.map(f => (
               <div key={f.title} className="flex gap-3.5">
                 <span

@@ -82,14 +82,6 @@ body {
 .font-display { font-family: var(--font-display), 'Bricolage Grotesque', system-ui, sans-serif; }
 .tabular { font-variant-numeric: tabular-nums; }
 
-/* Faint grid texture for navy bands */
-.navy-grid {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 44px 44px;
-}
-
 .zt-input {
   background: var(--surface);
   border: 1px solid var(--line-strong);
