@@ -29,28 +29,37 @@ export default function Home() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [error, setError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [lastSync, setLastSync] = useState<Date | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval>>()
 
   const [authUser, setAuthUser] = useState('')
   const [authPass, setAuthPass] = useState('')
   const [authError, setAuthError] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
 
   const isOverview = session?.role === 'admin' && selectedClient === ALL_CLIENTS
 
   async function handleLogin() {
+    if (signingIn) return
     setAuthError('')
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: authUser, password: authPass }),
-    })
-    if (!res.ok) {
-      setAuthError('Invalid credentials. Please try again.')
-      return
+    setSigningIn(true)
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUser, password: authPass }),
+      })
+      if (!res.ok) {
+        setAuthError('Invalid credentials. Please try again.')
+        return
+      }
+      const auth = await res.json()
+      setSession({ ...auth, password: authPass })
+      setSelectedClient(auth.role === 'user' ? auth.clientId : ALL_CLIENTS)
+    } finally {
+      setSigningIn(false)
     }
-    const auth = await res.json()
-    setSession({ ...auth, password: authPass })
-    setSelectedClient(auth.role === 'user' ? auth.clientId : ALL_CLIENTS)
   }
 
   function logout() {
@@ -58,12 +67,20 @@ export default function Home() {
     setSession(null)
     setData(null)
     setOverview(null)
+    setLastSync(null)
     setSelectedClient(ALL_CLIENTS)
+  }
+
+  function selectClient(id: string) {
+    setSelectedClient(id)
+    setData(null)
+    setError('')
   }
 
   const sync = useCallback(async (clientId: string, sess: Session) => {
     const wantsOverview = sess.role === 'admin' && clientId === ALL_CLIENTS
     setError('')
+    setSyncing(true)
     try {
       const body = { role: sess.role, username: sess.username, password: sess.password }
       const res = await fetch(wantsOverview ? '/api/overview' : '/api/sync', {
@@ -75,8 +92,11 @@ export default function Home() {
       if (!res.ok) throw new Error(json.error || 'Sync failed')
       if (wantsOverview) setOverview(json)
       else setData(json)
+      setLastSync(new Date())
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
+    } finally {
+      setSyncing(false)
     }
   }, [])
 
@@ -87,7 +107,6 @@ export default function Home() {
 
     sync(selectedClient, session)
 
-    // Auto-refresh in the background — no visible countdown.
     intervalRef.current = setInterval(() => {
       sync(selectedClient, session)
     }, SYNC_SECONDS * 1000)
@@ -103,132 +122,129 @@ export default function Home() {
         pass={authPass}
         setPass={setAuthPass}
         error={authError}
+        busy={signingIn}
         onLogin={handleLogin}
       />
     )
   }
 
+  const clientName =
+    (session.role === 'admin' ? session.clients.find(c => c.id === selectedClient)?.name : undefined) ??
+    data?.clientName ??
+    ''
+  const provider = isOverview ? undefined : data?.provider
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--pearl)' }}>
-      <nav
-        className="h-14 flex items-center gap-4 px-6 sticky top-0 z-50 border-b"
-        style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
-        <BrandMark />
+      <TopNav
+        session={session}
+        selectedClient={selectedClient}
+        onSelect={selectClient}
+        onRefresh={() => sync(selectedClient, session)}
+        onLogout={logout}
+        syncing={syncing}
+        lastSync={lastSync}
+      />
 
-        <div className="w-px h-4 mx-1" style={{ background: 'var(--line-strong)' }} />
+      <Hero
+        eyebrow={isOverview ? 'Agency overview' : 'Client workspace'}
+        title={isOverview ? 'All clients' : clientName || 'Workspace'}
+        subtitle={
+          isOverview
+            ? `Live outbound performance across ${session.clients.length} client workspace${
+                session.clients.length !== 1 ? 's' : ''
+              }.`
+            : 'Campaigns, replies and inbox health — refreshed live from your sending platform.'
+        }
+        provider={provider}
+      />
 
-        <RolePill role={session.role} />
-
-        {session.role === 'admin' && (
-          <select
-            value={selectedClient}
-            onChange={e => {
-              setSelectedClient(e.target.value)
-              setData(null)
-              setError('')
-            }}
-            className="text-[13px] px-3 py-1.5 rounded-lg outline-none border ml-1"
-            style={{
-              background: 'var(--surface-sunken)',
-              borderColor: 'var(--line-strong)',
-              color: 'var(--ink)',
-            }}>
-            <option value={ALL_CLIENTS}>All clients</option>
-            {session.clients.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <div className="ml-auto flex items-center gap-3">
-          <button
-            onClick={() => sync(selectedClient, session)}
-            className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
-            style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
-            ↻ Refresh
-          </button>
-          <button
-            onClick={logout}
-            className="text-[12px] px-3 py-1.5 rounded-lg border transition-colors hover:border-brand"
-            style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
-            Sign out
-          </button>
-        </div>
-      </nav>
-
-      <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-6">
+      <main className="flex-1 w-full max-w-[1400px] mx-auto px-4 sm:px-6 -mt-16 relative z-10 pb-16">
         {error && !(isOverview ? overview : data) ? (
-          <ErrorState message={error} />
+          <ErrorState message={error} onRetry={() => sync(selectedClient, session)} />
         ) : isOverview && overview ? (
-          <AdminOverview overview={overview} />
+          <AdminOverview overview={overview} onOpenClient={selectClient} />
         ) : !isOverview && data ? (
           <Workspace data={data} />
         ) : (
           <LoadingState />
         )}
       </main>
+
+      <footer className="border-t" style={{ borderColor: 'var(--line)' }}>
+        <div
+          className="max-w-[1400px] mx-auto px-4 sm:px-6 py-5 flex flex-wrap items-center justify-between gap-3 text-[12px]"
+          style={{ color: 'var(--ink-muted)' }}>
+          <Logo height={16} tone="dark" />
+          <span>RevOps &amp; GTM engineering · Data refreshes every {SYNC_SECONDS}s</span>
+        </div>
+      </footer>
     </div>
   )
 }
 
 /* ── Brand ───────────────────────────────────────────────────────────────── */
 
-/** The Zutomate mark — a deep-navy tile with a clean monogram Z. */
-function LogoTile({ size = 28, radius = 9 }: { size?: number; radius?: number }) {
+/**
+ * The Zutomate mark: a Z whose diagonal is an orange up-right arrow — the same
+ * construction as the logo on zutomate.com, redrawn as clean vectors.
+ */
+function LogoMark({ size = 28, tone = 'light' }: { size?: number; tone?: 'light' | 'dark' }) {
+  const bar = tone === 'light' ? '#ffffff' : 'var(--navy)'
   return (
-    <div
-      className="flex items-center justify-center flex-shrink-0"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: radius,
-        background: 'linear-gradient(145deg, var(--brand-hover), var(--brand-deep))',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 6px rgba(14,28,52,0.28)',
-      }}>
-      <ZIcon size={size * 0.5} />
-    </div>
-  )
-}
-
-function ZIcon({ size = 14, color = '#ffffff' }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M6.5 6h11L7 18h11"
-        stroke={color}
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <g strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4.5 6.5h9.5" stroke={bar} />
+        <path d="M4.5 25.5h23" stroke={bar} />
+        <path d="M6 23.5 25 7.5" stroke="var(--orange)" />
+        <path d="M16 6.5h10v10" stroke="var(--orange)" />
+      </g>
     </svg>
   )
 }
 
-function BrandMark() {
+/** Full wordmark: the arrow-Z followed by "utomate", reading as "Zutomate". */
+function Logo({ height = 24, tone = 'light' }: { height?: number; tone?: 'light' | 'dark' }) {
+  const text = tone === 'light' ? '#ffffff' : 'var(--navy)'
   return (
-    <div className="flex items-center gap-2.5 mr-1">
-      <LogoTile size={28} radius={9} />
-      <span className="font-bold text-[15px] tracking-tight" style={{ color: 'var(--ink)' }}>
-        Zutomate
-      </span>
-    </div>
+    <svg height={height} viewBox="0 0 152 32" fill="none" role="img" aria-label="Zutomate" style={{ width: 'auto' }}>
+      <g strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 6.5h9.5" stroke={text} />
+        <path d="M2 25.5h23" stroke={text} />
+        <path d="M3.5 23.5 22.5 7.5" stroke="var(--orange)" />
+        <path d="M13.5 6.5h10v10" stroke="var(--orange)" />
+      </g>
+      <text
+        x="27"
+        y="27.2"
+        fill={text}
+        className="font-display"
+        style={{ fontSize: 31, fontWeight: 500, letterSpacing: '-0.6px' }}>
+        utomate
+      </text>
+    </svg>
   )
 }
 
-function RolePill({ role }: { role: 'admin' | 'user' }) {
-  const admin = role === 'admin'
+function ArrowUpRight({ size = 14, color = 'currentColor' }: { size?: number; color?: string }) {
   return (
-    <span
-      className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold"
-      style={
-        admin
-          ? { background: 'var(--brand)', color: '#fff' }
-          : { background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }
-      }>
-      {admin ? 'Admin' : 'Client'}
-    </span>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M7 17 17 7M8 7h9v9" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function RefreshIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
@@ -258,6 +274,159 @@ function DollarBadge({ size = 18 }: { size?: number }) {
   )
 }
 
+/* ── App chrome ──────────────────────────────────────────────────────────── */
+
+interface TopNavProps {
+  session: Session
+  selectedClient: string
+  onSelect: (id: string) => void
+  onRefresh: () => void
+  onLogout: () => void
+  syncing: boolean
+  lastSync: Date | null
+}
+
+function TopNav({ session, selectedClient, onSelect, onRefresh, onLogout, syncing, lastSync }: TopNavProps) {
+  const admin = session.role === 'admin'
+
+  return (
+    <header className="sticky top-0 z-50 border-b" style={{ background: 'var(--navy)', borderColor: 'var(--on-navy-line)' }}>
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center gap-4">
+        <Logo height={22} tone="light" />
+
+        <span
+          className="hidden sm:inline-flex text-[10.5px] uppercase tracking-[0.14em] font-medium px-2.5 py-1 rounded-full border"
+          style={{ borderColor: 'var(--on-navy-line)', color: 'var(--on-navy-soft)' }}>
+          {admin ? 'Admin' : 'Client portal'}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <LiveIndicator lastSync={lastSync} />
+
+          <button
+            onClick={onRefresh}
+            disabled={syncing}
+            aria-label="Refresh data"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border transition-colors hover:bg-white/10"
+            style={{ borderColor: 'var(--on-navy-line)', color: 'var(--on-navy)' }}>
+            <span className={syncing ? 'animate-spin-slow inline-flex' : 'inline-flex'}>
+              <RefreshIcon />
+            </span>
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="h-9 px-3.5 rounded-lg border text-[13px] transition-colors hover:bg-white/10"
+            style={{ borderColor: 'var(--on-navy-line)', color: 'var(--on-navy)' }}>
+            Sign out
+          </button>
+        </div>
+      </div>
+
+      {admin && (
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6">
+          <div className="flex gap-1 overflow-x-auto -mb-px">
+            <ClientTab active={selectedClient === ALL_CLIENTS} onClick={() => onSelect(ALL_CLIENTS)}>
+              All clients
+            </ClientTab>
+            {session.clients.map(c => (
+              <ClientTab key={c.id} active={selectedClient === c.id} onClick={() => onSelect(c.id)}>
+                {c.name}
+              </ClientTab>
+            ))}
+          </div>
+        </div>
+      )}
+    </header>
+  )
+}
+
+function ClientTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="relative whitespace-nowrap px-3.5 py-3 text-[13px] font-medium transition-colors hover:text-white"
+      style={{ color: active ? 'var(--on-navy)' : 'var(--on-navy-muted)' }}>
+      {children}
+      <span
+        className="absolute left-3 right-3 bottom-0 h-[2px] rounded-full transition-opacity"
+        style={{ background: 'var(--orange)', opacity: active ? 1 : 0 }}
+      />
+    </button>
+  )
+}
+
+function LiveIndicator({ lastSync }: { lastSync: Date | null }) {
+  return (
+    <div className="hidden md:flex items-center gap-2 text-[12px] mr-1" style={{ color: 'var(--on-navy-soft)' }}>
+      <span className="live-dot w-2 h-2 rounded-full" style={{ background: 'var(--orange)' }} />
+      Live
+      {lastSync && (
+        <span style={{ color: 'var(--on-navy-muted)' }}>
+          · synced {lastSync.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function Hero({
+  eyebrow,
+  title,
+  subtitle,
+  provider,
+}: {
+  eyebrow: string
+  title: string
+  subtitle: string
+  provider?: ProviderId
+}) {
+  return (
+    <section className="relative overflow-hidden" style={{ background: 'var(--navy)' }}>
+      <div className="absolute inset-0 navy-grid" />
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage:
+            'radial-gradient(ellipse 60% 90% at 92% 0%, rgba(242,101,34,0.16) 0%, transparent 60%), radial-gradient(ellipse 50% 80% at 0% 100%, rgba(255,255,255,0.05) 0%, transparent 60%)',
+        }}
+      />
+      <div className="relative max-w-[1400px] mx-auto px-4 sm:px-6 pt-9 pb-28">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Eyebrow>{eyebrow}</Eyebrow>
+          {provider && <Eyebrow>{PROVIDER_LABEL[provider]}</Eyebrow>}
+        </div>
+        <h1
+          className="font-display text-[32px] sm:text-[42px] leading-[1.08] font-medium text-white"
+          style={{ letterSpacing: '-1.2px' }}>
+          {title}
+        </h1>
+        <p className="mt-3 text-[15px] font-light max-w-[620px]" style={{ color: 'var(--on-navy-soft)' }}>
+          {subtitle}
+        </p>
+      </div>
+    </section>
+  )
+}
+
+function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="inline-flex items-center gap-2 text-[10.5px] uppercase font-medium px-3 py-1 rounded-full border"
+      style={{ borderColor: 'rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.8)', letterSpacing: '1.8px' }}>
+      {children}
+    </span>
+  )
+}
+
 /* ── Login ───────────────────────────────────────────────────────────────── */
 
 interface LoginScreenProps {
@@ -266,113 +435,133 @@ interface LoginScreenProps {
   pass: string
   setPass: (v: string) => void
   error: string
+  busy: boolean
   onLogin: () => void
 }
 
 const FEATURES = [
-  'Live campaign tracking',
-  'Email warmup monitoring',
-  'Positive-reply pipeline',
-  'Multi-client workspace',
+  { title: 'Live campaign tracking', body: 'Sends, replies and bounces straight from your sending platform.' },
+  { title: 'Positive-reply pipeline', body: 'Every interested lead and the pipeline value behind it.' },
+  { title: 'Inbox health', body: 'Warmup and placement scores for every sending account.' },
 ]
 
-function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScreenProps) {
+function LoginScreen({ user, setUser, pass, setPass, error, busy, onLogin }: LoginScreenProps) {
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--pearl)' }}>
-      {/* Deep-navy brand panel */}
+      {/* Navy brand panel */}
       <div
-        className="hidden lg:flex flex-col justify-between w-[44%] relative overflow-hidden px-14 py-14"
-        style={{ background: 'var(--brand-deep)' }}>
+        className="hidden lg:flex flex-col justify-between w-[48%] relative overflow-hidden px-14 py-12"
+        style={{ background: 'var(--navy)' }}>
+        <div className="absolute inset-0 navy-grid" />
         <div
           className="absolute inset-0"
           style={{
             backgroundImage:
-              'radial-gradient(ellipse at 22% 18%, rgba(255,255,255,0.06) 0%, transparent 55%), radial-gradient(ellipse at 85% 90%, rgba(249,115,22,0.12) 0%, transparent 50%)',
+              'radial-gradient(ellipse 70% 55% at 100% 100%, rgba(242,101,34,0.22) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 0% 0%, rgba(255,255,255,0.06) 0%, transparent 60%)',
           }}
         />
-        <div className="relative z-10">
-          <div className="flex items-center gap-3">
-            <LogoTile size={40} radius={12} />
-            <span className="text-[20px] font-bold tracking-tight text-white">Zutomate</span>
-          </div>
-        </div>
 
         <div className="relative z-10">
-          <div className="text-[30px] leading-tight font-bold text-white mb-3">
-            Your outbound
+          <Logo height={28} tone="light" />
+        </div>
+
+        <div className="relative z-10 max-w-[480px]">
+          <div className="mb-6">
+            <Eyebrow>Client portal</Eyebrow>
+          </div>
+          <h2
+            className="font-display text-[46px] leading-[1.06] font-medium text-white mb-5"
+            style={{ letterSpacing: '-1.6px' }}>
+            Your outbound,
             <br />
-            command center.
-          </div>
-          <div className="text-[14px] leading-relaxed max-w-[300px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
-            Every campaign, warmup score and positive reply across all your clients — in one live view.
+            <span style={{ color: 'var(--orange)' }}>engineered</span> end to end.
+          </h2>
+          <p className="text-[16px] font-light leading-relaxed" style={{ color: 'var(--on-navy-soft)' }}>
+            One live view of every campaign, reply and sending inbox Zutomate runs for you.
+          </p>
+
+          <div className="mt-10 flex flex-col gap-5">
+            {FEATURES.map(f => (
+              <div key={f.title} className="flex gap-3.5">
+                <span
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 border"
+                  style={{ borderColor: 'var(--on-navy-line)', background: 'rgba(255,255,255,0.04)' }}>
+                  <ArrowUpRight size={15} color="var(--orange)" />
+                </span>
+                <div>
+                  <div className="text-[14px] font-medium text-white">{f.title}</div>
+                  <div className="text-[13px] font-light mt-0.5" style={{ color: 'var(--on-navy-muted)' }}>
+                    {f.body}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="relative z-10 flex flex-col gap-3 max-w-[280px]">
-          {FEATURES.map(f => (
-            <div key={f} className="flex items-center gap-3 text-[13px]" style={{ color: 'rgba(255,255,255,0.82)' }}>
-              <span
-                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
-                style={{ background: 'rgba(249,115,22,0.18)' }}>
-                <span style={{ color: 'var(--orange)', fontSize: 9 }}>✓</span>
-              </span>
-              {f}
-            </div>
-          ))}
+        <div className="relative z-10 text-[12px]" style={{ color: 'var(--on-navy-muted)' }}>
+          © {new Date().getFullYear()} Zutomate · RevOps &amp; GTM engineering
         </div>
       </div>
 
       {/* Form */}
-      <div className="flex-1 flex items-center justify-center px-8">
-        <div className="w-full max-w-[380px]">
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <LogoTile size={36} radius={11} />
-            <span className="text-[22px] font-bold" style={{ color: 'var(--ink)' }}>
-              Zutomate
-            </span>
+      <div className="flex-1 flex items-center justify-center px-4 sm:px-8 py-12">
+        <div className="w-full max-w-[400px]">
+          <div className="mb-10 lg:hidden">
+            <Logo height={28} tone="dark" />
           </div>
 
           <div className="mb-8">
-            <h1 className="text-[28px] font-bold tracking-tight mb-1.5" style={{ color: 'var(--ink)' }}>
+            <h1
+              className="font-display text-[32px] font-medium mb-2"
+              style={{ color: 'var(--ink)', letterSpacing: '-0.8px' }}>
               Welcome back
             </h1>
-            <p className="text-[14px]" style={{ color: 'var(--ink-soft)' }}>
-              Sign in to your dashboard
+            <p className="text-[15px] font-light" style={{ color: 'var(--ink-soft)' }}>
+              Sign in to see your live outbound numbers.
             </p>
           </div>
 
-          <div className="flex flex-col gap-4">
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={e => {
+              e.preventDefault()
+              onLogin()
+            }}>
             <Field label="Username">
-              <LoginInput value={user} onChange={setUser} onEnter={onLogin} placeholder="Enter your username" />
+              <LoginInput value={user} onChange={setUser} placeholder="Enter your username" autoComplete="username" />
             </Field>
 
             <Field label="Password">
               <LoginInput
                 value={pass}
                 onChange={setPass}
-                onEnter={onLogin}
                 placeholder="Enter your password"
                 type="password"
+                autoComplete="current-password"
               />
             </Field>
 
             {error && (
               <div
                 className="px-4 py-3 rounded-xl text-[13px]"
-                style={{ background: 'var(--red-wash)', border: '1px solid rgba(180,35,24,0.2)', color: 'var(--red-ink)' }}>
+                style={{ background: 'var(--red-wash)', border: '1px solid rgba(194,52,31,0.2)', color: 'var(--red-ink)' }}>
                 {error}
               </div>
             )}
 
             <button
-              onClick={onLogin}
-              className="w-full py-3.5 rounded-xl text-[14px] font-bold text-white transition-colors mt-1"
-              style={{ background: 'var(--brand)' }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--brand-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'var(--brand)')}>
-              Sign in →
+              type="submit"
+              disabled={busy}
+              className="btn-orange w-full mt-2 py-3.5 rounded-full text-[15px] font-medium inline-flex items-center justify-center gap-2 disabled:opacity-70">
+              {busy ? 'Signing in…' : 'Sign in'}
+              {!busy && <ArrowUpRight size={16} />}
             </button>
-          </div>
+          </form>
+
+          <p className="mt-8 text-[12.5px] text-center" style={{ color: 'var(--ink-muted)' }}>
+            Need access? Contact your Zutomate account manager.
+          </p>
         </div>
       </div>
     </div>
@@ -382,9 +571,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, onLogin }: LoginScre
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label
-        className="block text-[11px] font-bold mb-2 uppercase tracking-widest"
-        style={{ color: 'var(--ink-muted)' }}>
+      <label className="block text-[13px] font-medium mb-2" style={{ color: 'var(--ink)' }}>
         {label}
       </label>
       {children}
@@ -395,15 +582,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function LoginInput({
   value,
   onChange,
-  onEnter,
   placeholder,
   type = 'text',
+  autoComplete,
 }: {
   value: string
   onChange: (v: string) => void
-  onEnter: () => void
   placeholder: string
   type?: string
+  autoComplete?: string
 }) {
   const [visible, setVisible] = useState(false)
   const isPassword = type === 'password'
@@ -415,14 +602,9 @@ function LoginInput({
         value={value}
         type={inputType}
         placeholder={placeholder}
+        autoComplete={autoComplete}
         onChange={e => onChange(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && onEnter()}
-        className={`w-full px-4 py-3 rounded-xl text-[14px] outline-none border transition-all ${
-          isPassword ? 'pr-11' : ''
-        }`}
-        style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--ink)' }}
-        onFocus={e => (e.target.style.borderColor = 'var(--brand)')}
-        onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
+        className={`zt-input w-full px-4 py-3.5 rounded-xl text-[14px] ${isPassword ? 'pr-11' : ''}`}
       />
       {isPassword && (
         <button
@@ -472,8 +654,8 @@ const PROVIDER_LABEL: Record<ProviderId, string> = {
 function ProviderBadge({ provider }: { provider: ProviderId }) {
   return (
     <span
-      className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-      style={{ background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }}>
+      className="text-[10px] uppercase font-medium px-2 py-0.5 rounded-full border"
+      style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)', letterSpacing: '1px' }}>
       {PROVIDER_LABEL[provider]}
     </span>
   )
@@ -484,185 +666,280 @@ interface Stat {
   value: string
   unit?: string
   sub: string
-  color: string
-  /** Shows the green dollar badge — used for positive replies (opportunities). */
-  badge?: boolean
+  color?: string
+  /** The positive-reply card: rendered on navy with the green dollar badge. */
+  featured?: boolean
 }
 
 function StatCards({ stats }: { stats: Stat[] }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
-      {stats.map(s => (
-        <div key={s.label} className="rounded-xl p-5 border" style={CARD_STYLE}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-[10px] uppercase tracking-widest font-bold" style={{ color: 'var(--ink-muted)' }}>
+    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
+      {stats.map(s =>
+        s.featured ? (
+          <div
+            key={s.label}
+            className="rounded-2xl p-5 relative overflow-hidden"
+            style={{ background: 'linear-gradient(150deg, var(--navy-3), var(--navy))', boxShadow: 'var(--shadow-lift)' }}>
+            <div
+              className="absolute -right-8 -top-8 w-28 h-28 rounded-full"
+              style={{ background: 'radial-gradient(circle, rgba(47,211,138,0.22), transparent 70%)' }}
+            />
+            <div className="relative flex items-center justify-between mb-4">
+              <div className="text-[11px] uppercase font-medium" style={{ color: 'var(--on-navy-soft)', letterSpacing: '1.2px' }}>
+                {s.label}
+              </div>
+              <DollarBadge size={18} />
+            </div>
+            <div
+              className="relative font-display tabular text-[32px] font-semibold leading-none"
+              style={{ color: 'var(--green-bright)', letterSpacing: '-0.8px' }}>
+              {s.value}
+            </div>
+            <div className="relative text-[12px] mt-2" style={{ color: 'var(--on-navy-soft)' }}>
+              {s.sub}
+            </div>
+          </div>
+        ) : (
+          <div key={s.label} className="rounded-2xl p-5 border" style={CARD_STYLE}>
+            <div className="text-[11px] uppercase font-medium mb-4" style={{ color: 'var(--ink-muted)', letterSpacing: '1.2px' }}>
               {s.label}
             </div>
-            {s.badge && <DollarBadge size={16} />}
+            <div
+              className="font-display tabular text-[32px] font-semibold leading-none"
+              style={{ color: s.color ?? 'var(--ink)', letterSpacing: '-0.8px' }}>
+              {s.value}
+              {s.unit && (
+                <span className="text-[14px] font-normal ml-0.5" style={{ color: 'var(--ink-muted)' }}>
+                  {s.unit}
+                </span>
+              )}
+            </div>
+            <div className="text-[12px] mt-2" style={{ color: 'var(--ink-muted)' }}>
+              {s.sub}
+            </div>
           </div>
-          <div className="text-[26px] font-bold font-mono leading-none" style={{ color: s.color }}>
-            {s.value}
-            {s.unit && (
-              <span className="text-[13px] font-normal" style={{ color: 'var(--ink-muted)' }}>
-                {s.unit}
-              </span>
-            )}
-          </div>
-          <div className="text-[11px] mt-1.5" style={{ color: 'var(--ink-muted)' }}>
-            {s.sub}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function PageHeading({ title, right }: { title: string; right?: React.ReactNode }) {
-  return (
-    <div className="mb-6 flex items-center gap-3">
-      <h1 className="text-[22px] font-bold tracking-tight" style={{ color: 'var(--ink)' }}>
-        {title}
-      </h1>
-      {right}
-    </div>
-  )
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 mb-4">
-      {/* small orange tick — the one deliberate brand accent */}
-      <span className="w-[3px] h-3.5 rounded-full flex-shrink-0" style={{ background: 'var(--orange)' }} />
-      <span
-        className="text-[10px] uppercase tracking-widest font-bold"
-        style={{ color: 'var(--ink-soft)' }}>
-        {children}
-      </span>
-      <div className="flex-1 h-px" style={{ background: 'var(--line)' }} />
-    </div>
-  )
-}
-
-/* ── Admin: every client, every campaign ─────────────────────────────────── */
-
-function AdminOverview({ overview }: { overview: OverviewData }) {
-  const rate = replyRate(overview.totalSent, overview.totalReplies)
-  const bounce = bounceRate(overview.totalSent, overview.totalBounces)
-  const failed = overview.clients.filter(c => c.error)
-
-  const stats: Stat[] = [
-    {
-      label: 'Emails Sent',
-      value: overview.totalSent.toLocaleString(),
-      sub: `Across ${overview.clients.length} client${overview.clients.length !== 1 ? 's' : ''}`,
-      color: 'var(--ink)',
-    },
-    {
-      label: 'Reply Rate',
-      value: `${rate.toFixed(1)}%`,
-      sub: `${overview.totalReplies.toLocaleString()} total replies`,
-      color: 'var(--ink)',
-    },
-    {
-      label: 'Positive Replies',
-      value: overview.totalPositiveReplies.toLocaleString(),
-      sub: overview.totalPipeline > 0 ? `$${overview.totalPipeline.toLocaleString()} pipeline` : 'Interested leads',
-      color: 'var(--green-ink)',
-      badge: true,
-    },
-    {
-      label: 'Bounce Rate',
-      value: `${bounce.toFixed(1)}%`,
-      sub: `${overview.totalBounces.toLocaleString()} bounced`,
-      color: bounce > 5 ? 'var(--amber-ink)' : 'var(--ink)',
-    },
-    {
-      label: 'Active Campaigns',
-      value: String(overview.activeCampaigns),
-      sub: `${overview.campaigns.length} total campaigns`,
-      color: 'var(--ink)',
-    },
-    {
-      label: 'Clients',
-      value: String(overview.clients.length),
-      sub: failed.length > 0 ? `${failed.length} failing to sync` : 'All syncing',
-      color: failed.length > 0 ? 'var(--amber-ink)' : 'var(--green-ink)',
-    },
-  ]
-
-  return (
-    <div className="animate-fade-in">
-      <PageHeading title="All Clients" />
-
-      <StatCards stats={stats} />
-
-      <div className="rounded-xl p-5 border mb-4" style={CARD_STYLE}>
-        <SectionTitle>Client Breakdown</SectionTitle>
-        <div className="grid grid-cols-3 gap-3">
-          {overview.clients.map(c => (
-            <ClientCard key={c.clientId} client={c} />
-          ))}
-        </div>
-      </div>
-
-      <div className="rounded-xl p-5 border mb-24" style={CARD_STYLE}>
-        <SectionTitle>All Campaigns</SectionTitle>
-        <AllCampaignsTable campaigns={overview.campaigns} />
-      </div>
-    </div>
-  )
-}
-
-function ClientCard({ client }: { client: ClientRollup }) {
-  const rate = replyRate(client.totalSent, client.totalReplies)
-
-  return (
-    <div className="rounded-lg p-4 border" style={{ borderColor: 'var(--line)', background: 'var(--pearl)' }}>
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="text-[13px] font-bold truncate" style={{ color: 'var(--ink)' }}>
-          {client.clientName}
-        </div>
-        <ProviderBadge provider={client.provider} />
-      </div>
-
-      {client.error ? (
-        <div className="text-[11px] leading-snug" style={{ color: 'var(--red-ink)' }}>
-          Sync failed — {client.error}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-y-2.5 gap-x-3">
-          <Metric label="Sent" value={client.totalSent.toLocaleString()} />
-          <Metric label="Reply rate" value={`${rate.toFixed(1)}%`} />
-          <Metric label="Positive" value={client.totalPositiveReplies.toLocaleString()} accent="var(--green-ink)" badge />
-          <Metric label="Bounce rate" value={`${bounceRate(client.totalSent, client.totalBounces).toFixed(1)}%`} />
-          <Metric label="Active" value={String(client.activeCampaigns)} />
-          <Metric label="Avg warmup" value={client.avgWarmup === undefined ? '—' : String(client.avgWarmup)} />
-        </div>
+        ),
       )}
     </div>
   )
 }
 
-function Metric({
-  label,
-  value,
-  accent,
-  badge,
+function Panel({
+  title,
+  subtitle,
+  right,
+  className = '',
+  children,
 }: {
-  label: string
-  value: string
-  accent?: string
-  badge?: boolean
+  title: string
+  subtitle?: string
+  right?: React.ReactNode
+  className?: string
+  children: React.ReactNode
 }) {
   return (
-    <div>
-      <div
-        className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-bold mb-0.5"
-        style={{ color: 'var(--ink-muted)' }}>
-        {label}
-        {badge && <DollarBadge size={12} />}
+    <section className={`rounded-2xl border ${className}`} style={CARD_STYLE}>
+      <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-4">
+        <div>
+          <h2 className="font-display text-[17px] font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.3px' }}>
+            {title}
+          </h2>
+          {subtitle && (
+            <p className="text-[12.5px] mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+              {subtitle}
+            </p>
+          )}
+        </div>
+        {right}
       </div>
-      <div className="text-[15px] font-mono font-bold" style={{ color: accent ?? 'var(--ink)' }}>
+      <div className="px-5 sm:px-6 pb-5">{children}</div>
+    </section>
+  )
+}
+
+function CountChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="text-[11.5px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap"
+      style={{ background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }}>
+      {children}
+    </span>
+  )
+}
+
+/* ── Admin: every client, every campaign ─────────────────────────────────── */
+
+function AdminOverview({ overview, onOpenClient }: { overview: OverviewData; onOpenClient: (id: string) => void }) {
+  const rate = replyRate(overview.totalSent, overview.totalReplies)
+  const bounce = bounceRate(overview.totalSent, overview.totalBounces)
+  const failed = overview.clients.filter(c => c.error)
+  const [campaignFilter, setCampaignFilter] = useState('all')
+
+  const stats: Stat[] = [
+    {
+      label: 'Emails sent',
+      value: overview.totalSent.toLocaleString(),
+      sub: `Across ${overview.clients.length} client${overview.clients.length !== 1 ? 's' : ''}`,
+    },
+    {
+      label: 'Reply rate',
+      value: `${rate.toFixed(1)}%`,
+      sub: `${overview.totalReplies.toLocaleString()} total replies`,
+    },
+    {
+      label: 'Positive replies',
+      value: overview.totalPositiveReplies.toLocaleString(),
+      sub: overview.totalPipeline > 0 ? `$${overview.totalPipeline.toLocaleString()} pipeline` : 'Interested leads',
+      featured: true,
+    },
+    {
+      label: 'Bounce rate',
+      value: `${bounce.toFixed(1)}%`,
+      sub: `${overview.totalBounces.toLocaleString()} bounced`,
+      color: bounce > 5 ? 'var(--amber-ink)' : undefined,
+    },
+    {
+      label: 'Active campaigns',
+      value: String(overview.activeCampaigns),
+      sub: `${overview.campaigns.length} total campaigns`,
+    },
+    {
+      label: 'Clients',
+      value: String(overview.clients.length),
+      sub: failed.length > 0 ? `${failed.length} failing to sync` : 'All syncing',
+      color: failed.length > 0 ? 'var(--amber-ink)' : undefined,
+    },
+  ]
+
+  return (
+    <div className="animate-fade-in">
+      <StatCards stats={stats} />
+
+      <Panel
+        title="Clients"
+        subtitle="Performance per workspace — open one to see its campaigns and inboxes."
+        right={<CountChip>{overview.clients.length} workspaces</CountChip>}
+        className="mb-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {overview.clients.map(c => (
+            <ClientCard key={c.clientId} client={c} onOpen={() => onOpenClient(c.clientId)} />
+          ))}
+        </div>
+      </Panel>
+
+      <Panel
+        title="All campaigns"
+        subtitle="Every campaign across every client."
+        right={
+          <FilterToggle
+            value={campaignFilter}
+            onChange={setCampaignFilter}
+            options={[
+              { id: 'all', label: `All ${overview.campaigns.length}` },
+              { id: 'active', label: `Active ${overview.activeCampaigns}` },
+            ]}
+          />
+        }>
+        <AllCampaignsTable
+          key={campaignFilter}
+          campaigns={campaignFilter === 'active' ? overview.campaigns.filter(c => c.active) : overview.campaigns}
+        />
+      </Panel>
+    </div>
+  )
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?'
+}
+
+function ClientCard({ client, onOpen }: { client: ClientRollup; onOpen: () => void }) {
+  const rate = replyRate(client.totalSent, client.totalReplies)
+
+  return (
+    <button
+      onClick={onOpen}
+      className="group text-left rounded-2xl border p-5 transition-all hover:-translate-y-0.5"
+      style={{ borderColor: 'var(--line)', background: 'var(--surface)' }}
+      onMouseEnter={e => (e.currentTarget.style.boxShadow = 'var(--shadow-lift)')}
+      onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}>
+      <div className="flex items-center gap-3 mb-5">
+        <span
+          className="w-10 h-10 rounded-xl flex items-center justify-center font-display text-[14px] font-semibold text-white flex-shrink-0"
+          style={{ background: 'var(--navy)' }}>
+          {initials(client.clientName)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[16px] font-semibold truncate" style={{ color: 'var(--ink)' }}>
+            {client.clientName}
+          </div>
+          <div className="mt-0.5">
+            <ProviderBadge provider={client.provider} />
+          </div>
+        </div>
+        <span
+          className="w-8 h-8 rounded-full flex items-center justify-center transition-colors group-hover:bg-[var(--orange)] group-hover:text-white"
+          style={{ background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }}>
+          <ArrowUpRight size={14} />
+        </span>
+      </div>
+
+      {client.error ? (
+        <div
+          className="text-[12px] leading-snug rounded-xl px-3 py-2.5"
+          style={{ color: 'var(--red-ink)', background: 'var(--red-wash)' }}>
+          Sync failed — {client.error}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-end justify-between mb-2">
+            <div>
+              <div className="text-[11px] uppercase font-medium" style={{ color: 'var(--ink-muted)', letterSpacing: '1px' }}>
+                Reply rate
+              </div>
+              <div className="font-display tabular text-[28px] font-semibold leading-tight" style={{ color: 'var(--ink)' }}>
+                {rate.toFixed(1)}%
+              </div>
+            </div>
+            <div className="text-right">
+              <div
+                className="flex items-center justify-end gap-1 text-[11px] uppercase font-medium"
+                style={{ color: 'var(--ink-muted)', letterSpacing: '1px' }}>
+                Positive <DollarBadge size={13} />
+              </div>
+              <div className="font-display tabular text-[28px] font-semibold leading-tight" style={{ color: 'var(--green-ink)' }}>
+                {client.totalPositiveReplies.toLocaleString()}
+              </div>
+            </div>
+          </div>
+
+          <div className="h-1.5 rounded-full overflow-hidden mb-4" style={{ background: 'var(--surface-sunken)' }}>
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${Math.min(rate * 10, 100)}%`, background: 'var(--orange)' }}
+            />
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 pt-4 border-t" style={{ borderColor: 'var(--line)' }}>
+            <Metric label="Sent" value={client.totalSent.toLocaleString()} />
+            <Metric label="Bounce" value={`${bounceRate(client.totalSent, client.totalBounces).toFixed(1)}%`} />
+            <Metric label="Active" value={String(client.activeCampaigns)} />
+            <Metric label="Warmup" value={client.avgWarmup === undefined ? '—' : String(client.avgWarmup)} />
+          </div>
+        </>
+      )}
+    </button>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10.5px] uppercase font-medium mb-0.5" style={{ color: 'var(--ink-muted)', letterSpacing: '0.8px' }}>
+        {label}
+      </div>
+      <div className="text-[13.5px] font-mono font-medium truncate" style={{ color: 'var(--ink)' }}>
         {value}
       </div>
     </div>
@@ -675,59 +952,112 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
   if (campaigns.length === 0) return <Empty>No campaigns across any client</Empty>
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[12px]">
+    <TableFrame
+      headers={ALL_CAMPAIGN_HEADERS}
+      leftAligned={['Client', 'Campaign']}
+      rows={campaigns.map(c => (
+        <tr key={`${c.clientId}:${c.campaignId}`} className="row-hover border-t" style={{ borderColor: 'var(--line)' }}>
+          <td className="py-3.5 px-4 whitespace-nowrap">
+            <div className="flex items-center gap-2">
+              <span className="font-medium" style={{ color: 'var(--ink)' }}>
+                {c.clientName}
+              </span>
+              <ProviderBadge provider={c.provider} />
+            </div>
+          </td>
+          <td className="py-3.5 px-4 max-w-[320px]">
+            <div className="truncate" style={{ color: 'var(--ink-soft)' }}>
+              {c.campaignName}
+            </div>
+          </td>
+          <td className="py-3.5 px-4 text-right">
+            <StatusPill active={c.active} />
+          </td>
+          <Cell>{c.leads.toLocaleString()}</Cell>
+          <Cell>{c.sent.toLocaleString()}</Cell>
+          <Cell>{c.replies.toLocaleString()}</Cell>
+          <PositiveCell value={c.positiveReplies} />
+          <RateCell value={replyRate(c.sent, c.replies)} />
+        </tr>
+      ))}
+    />
+  )
+}
+
+const VISIBLE_ROWS = 12
+
+/** Table shell that shows the first VISIBLE_ROWS rows, with a toggle for the rest. */
+function TableFrame({
+  headers,
+  leftAligned,
+  rows,
+}: {
+  headers: string[]
+  leftAligned: string[]
+  rows: React.ReactNode[]
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const hidden = rows.length - VISIBLE_ROWS
+
+  return (
+    <>
+      <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--line)' }}>
+        <table className="w-full text-[13px]">
         <thead>
-          <tr className="border-b" style={{ borderColor: 'var(--line-strong)' }}>
-            {ALL_CAMPAIGN_HEADERS.map(h => (
+          <tr style={{ background: 'var(--surface-sunken)' }}>
+            {headers.map(h => (
               <th
                 key={h}
-                className={`py-2.5 px-3 font-bold uppercase tracking-wider text-[10px] ${
-                  h === 'Client' || h === 'Campaign' ? 'text-left' : 'text-right'
+                className={`py-3 px-4 font-medium uppercase text-[10.5px] whitespace-nowrap ${
+                  leftAligned.includes(h) ? 'text-left' : 'text-right'
                 }`}
-                style={{ color: 'var(--ink-soft)' }}>
+                style={{ color: 'var(--ink-muted)', letterSpacing: '1px' }}>
                 {h}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody>
-          {campaigns.map(c => (
-            <tr
-              key={`${c.clientId}:${c.campaignId}`}
-              className="border-b hover:bg-black/[0.015] transition-colors"
-              style={{ borderColor: 'var(--line)' }}>
-              <td className="py-3 px-3 whitespace-nowrap">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium" style={{ color: 'var(--ink)' }}>
-                    {c.clientName}
-                  </span>
-                  <ProviderBadge provider={c.provider} />
-                </div>
-              </td>
-              <td className="py-3 px-3 max-w-[280px]">
-                <div className="truncate" style={{ color: 'var(--ink-soft)' }}>
-                  {c.campaignName}
-                </div>
-              </td>
-              <td className="py-3 px-3 text-right">
-                <StatusPill active={c.active} />
-              </td>
-              <Cell>{c.leads.toLocaleString()}</Cell>
-              <Cell>{c.sent.toLocaleString()}</Cell>
-              <Cell>{c.replies.toLocaleString()}</Cell>
-              <td
-                className="py-3 px-3 text-right font-mono font-semibold"
-                style={{ color: c.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
-                {c.positiveReplies.toLocaleString()}
-              </td>
-              <td className="py-3 px-3 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
-                {replyRate(c.sent, c.replies).toFixed(1)}%
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          <tbody>{showAll ? rows : rows.slice(0, VISIBLE_ROWS)}</tbody>
+        </table>
+      </div>
+      {hidden > 0 && (
+        <div className="flex justify-center pt-4">
+          <button
+            onClick={() => setShowAll(s => !s)}
+            className="text-[12.5px] font-medium px-4 py-2 rounded-full border transition-colors hover:border-[var(--orange)]"
+            style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
+            {showAll ? 'Show fewer' : `Show all ${rows.length} campaigns`}
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
+function FilterToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: { id: string; label: string }[]
+  value: string
+  onChange: (id: string) => void
+}) {
+  return (
+    <div className="inline-flex p-0.5 rounded-full" style={{ background: 'var(--surface-sunken)' }}>
+      {options.map(o => (
+        <button
+          key={o.id}
+          onClick={() => onChange(o.id)}
+          className="text-[12px] font-medium px-3 py-1 rounded-full transition-colors whitespace-nowrap"
+          style={
+            o.id === value
+              ? { background: 'var(--surface)', color: 'var(--ink)', boxShadow: '0 1px 2px rgba(13,27,46,0.08)' }
+              : { color: 'var(--ink-muted)' }
+          }>
+          {o.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -735,12 +1065,13 @@ function AllCampaignsTable({ campaigns }: { campaigns: AttributedCampaign[] }) {
 function StatusPill({ active }: { active: boolean }) {
   return (
     <span
-      className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+      className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full font-medium"
       style={
         active
           ? { background: 'var(--green-wash)', color: 'var(--green-ink)' }
           : { background: 'var(--surface-sunken)', color: 'var(--ink-muted)' }
       }>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'currentColor' }} />
       {active ? 'Active' : 'Paused'}
     </span>
   )
@@ -755,71 +1086,65 @@ function Workspace({ data }: { data: DashboardData }) {
 
   const stats: Stat[] = [
     {
-      label: 'Emails Sent',
+      label: 'Emails sent',
       value: data.totalSent.toLocaleString(),
       sub: `${data.activeCampaigns} active campaign${data.activeCampaigns !== 1 ? 's' : ''}`,
-      color: 'var(--ink)',
     },
     {
-      label: 'Reply Rate',
+      label: 'Reply rate',
       value: `${rate.toFixed(1)}%`,
       sub: `${data.totalReplies.toLocaleString()} total replies`,
-      color: 'var(--ink)',
     },
     {
-      label: 'Positive Replies',
+      label: 'Positive replies',
       value: data.totalPositiveReplies.toLocaleString(),
       sub: data.totalPipeline > 0 ? `$${data.totalPipeline.toLocaleString()} pipeline` : 'Interested leads',
-      color: 'var(--green-ink)',
-      badge: true,
+      featured: true,
     },
     {
-      label: 'Bounce Rate',
+      label: 'Bounce rate',
       value: `${bounce.toFixed(1)}%`,
       sub: `${data.totalBounces.toLocaleString()} bounced`,
-      color: bounce > 5 ? 'var(--amber-ink)' : 'var(--ink)',
+      color: bounce > 5 ? 'var(--amber-ink)' : undefined,
     },
     {
-      label: 'Unread Emails',
+      label: 'Unread emails',
       // Smartlead exposes no unread count.
       value: data.unreadCount === undefined ? '—' : String(data.unreadCount),
       sub: data.unreadCount === undefined ? 'Not reported' : 'Awaiting reply',
-      color: 'var(--ink)',
     },
     {
-      label: 'Avg Warmup',
+      label: 'Avg warmup',
       value: avgWarmup === undefined ? '—' : String(avgWarmup),
       unit: avgWarmup === undefined ? undefined : '/100',
       sub: `${data.accounts.length} account${data.accounts.length !== 1 ? 's' : ''}`,
-      color: 'var(--ink)',
     },
   ]
 
   return (
     <div className="animate-fade-in">
-      <PageHeading
-        title={`${data.clientName} Workspace`}
-        right={<ProviderBadge provider={data.provider} />}
-      />
-
       <StatCards stats={stats} />
 
-      <div className="grid grid-cols-5 gap-4 mb-4">
-        <div className="col-span-3 rounded-xl p-5 border" style={CARD_STYLE}>
-          <SectionTitle>Campaign Performance</SectionTitle>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 mb-5">
+        <Panel title="Campaign performance" subtitle="Sent vs. replies, latest 8 campaigns" className="lg:col-span-3">
           <CampaignBarChart data={data} />
-        </div>
+        </Panel>
 
-        <div className="col-span-2 rounded-xl p-5 border" style={CARD_STYLE}>
-          <SectionTitle>Email Accounts</SectionTitle>
-          <WarmupList accounts={data.accounts} provider={data.provider} />
-        </div>
+        <Panel
+          title="Sending accounts"
+          subtitle={data.provider === 'smartlead' ? 'Inbox placement score per account' : 'Warmup score per account'}
+          right={<CountChip>{data.accounts.length}</CountChip>}
+          className="lg:col-span-2">
+          <WarmupList accounts={data.accounts} />
+        </Panel>
       </div>
 
-      <div className="rounded-xl p-5 border mb-24" style={CARD_STYLE}>
-        <SectionTitle>Analytics Breakdown</SectionTitle>
+      <Panel
+        title="Campaign breakdown"
+        subtitle="Every campaign in this workspace."
+        right={<CountChip>{data.analytics.length} campaigns</CountChip>}>
         <AnalyticsTable data={data} />
-      </div>
+      </Panel>
     </div>
   )
 }
@@ -831,48 +1156,48 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
   const maxSent = Math.max(...items.map(a => a.sent), 1)
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {items.map(item => {
         const rate = replyRate(item.sent, item.replies)
 
         return (
           <div key={item.campaignId}>
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="text-[12px] font-medium truncate max-w-[55%]" style={{ color: 'var(--ink)' }}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="text-[13px] font-medium truncate" style={{ color: 'var(--ink)' }}>
                 {item.campaignName || 'Unknown'}
               </div>
-              <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-                <span className="text-[11px] font-mono" style={{ color: 'var(--ink-muted)' }}>
-                  {item.sent.toLocaleString()}
+              <div className="flex items-center gap-4 flex-shrink-0">
+                <span className="text-[12px] font-mono" style={{ color: 'var(--ink-muted)' }}>
+                  {item.sent.toLocaleString()} sent
                 </span>
                 <span
-                  className="text-[11px] font-mono font-bold w-12 text-right"
-                  style={{ color: rate > 0 ? 'var(--ink)' : 'var(--ink-muted)' }}>
+                  className="text-[12px] font-mono font-medium w-12 text-right"
+                  style={{ color: rate > 0 ? 'var(--orange-ink)' : 'var(--ink-muted)' }}>
                   {rate.toFixed(1)}%
                 </span>
               </div>
             </div>
-            <div className="relative h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
+            <div className="relative h-2.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(item.sent / maxSent) * 100}%`, background: 'var(--brand-wash)' }}
+                style={{ width: `${(item.sent / maxSent) * 100}%`, background: 'rgba(13,27,46,0.16)' }}
               />
               <div
                 className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${(item.replies / maxSent) * 100}%`, background: 'var(--brand)' }}
+                style={{ width: `${Math.max((item.replies / maxSent) * 100, item.replies > 0 ? 1.5 : 0)}%`, background: 'var(--orange)' }}
               />
             </div>
           </div>
         )
       })}
 
-      <div className="flex items-center gap-5 mt-1 text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--brand-wash)' }} />
+      <div className="flex items-center gap-5 pt-1 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-2 rounded-sm" style={{ background: 'rgba(13,27,46,0.16)' }} />
           Sent
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-sm" style={{ background: 'var(--brand)' }} />
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-2 rounded-sm" style={{ background: 'var(--orange)' }} />
           Replies
         </div>
       </div>
@@ -883,25 +1208,23 @@ function CampaignBarChart({ data }: { data: DashboardData }) {
 function AccountRow({ account }: { account: EmailAccount }) {
   const score = account.warmupScore
   const warn = score !== undefined && score < WARMUP_THRESHOLD
-  const color = warn ? 'var(--amber-ink)' : 'var(--brand)'
+  const color = warn ? 'var(--amber-ink)' : 'var(--green-ink)'
 
   return (
-    <div className="flex items-center justify-between py-2.5 border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+    <div className="flex items-center justify-between py-3 border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-mono truncate" style={{ color: 'var(--ink-soft)' }}>
+        <div className="text-[12px] font-mono truncate" style={{ color: 'var(--ink)' }}>
           {account.email}
         </div>
-        <div
-          className="text-[10px] mt-0.5 font-medium"
-          style={{ color: score === undefined ? 'var(--ink-muted)' : color }}>
+        <div className="text-[11px] mt-0.5" style={{ color: score === undefined ? 'var(--ink-muted)' : color }}>
           {score === undefined ? 'No warmup data' : warn ? 'Below threshold' : 'Healthy'}
         </div>
       </div>
-      <div className="flex items-center gap-2.5 flex-shrink-0 ml-3">
-        <div className="w-14 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
-          <div className="h-full rounded-full" style={{ width: `${score ?? 0}%`, background: color }} />
+      <div className="flex items-center gap-3 flex-shrink-0 ml-3">
+        <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
+          <div className="h-full rounded-full" style={{ width: `${score ?? 0}%`, background: warn ? color : 'var(--navy)' }} />
         </div>
-        <div className="text-[12px] font-mono font-bold w-7 text-right" style={{ color }}>
+        <div className="text-[13px] font-mono font-medium w-7 text-right" style={{ color: warn ? color : 'var(--ink)' }}>
           {score ?? '—'}
         </div>
       </div>
@@ -909,9 +1232,9 @@ function AccountRow({ account }: { account: EmailAccount }) {
   )
 }
 
-const VISIBLE_ACCOUNTS = 9
+const VISIBLE_ACCOUNTS = 8
 
-function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider: ProviderId }) {
+function WarmupList({ accounts }: { accounts: EmailAccount[] }) {
   const [expanded, setExpanded] = useState(false)
   if (accounts.length === 0) return <Empty>No accounts found</Empty>
 
@@ -919,20 +1242,14 @@ function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider
 
   return (
     <div className="flex flex-col">
-      {provider === 'smartlead' && (
-        <div className="text-[10px] mb-2" style={{ color: 'var(--ink-muted)' }}>
-          Score shown is inbox placement — Smartlead reports no 0–100 warmup score.
-        </div>
-      )}
-
       {accounts.slice(0, VISIBLE_ACCOUNTS).map(a => (
         <AccountRow key={a.email} account={a} />
       ))}
 
       <div
         style={{
-          maxHeight: expanded ? `${Math.min(extra.length * 52, 800)}px` : '0px',
-          overflow: 'hidden',
+          maxHeight: expanded ? `${Math.min(extra.length * 56, 900)}px` : '0px',
+          overflow: expanded ? 'auto' : 'hidden',
           transition: 'max-height 0.35s cubic-bezier(0.4,0,0.2,1)',
         }}>
         {extra.map(a => (
@@ -943,9 +1260,9 @@ function WarmupList({ accounts, provider }: { accounts: EmailAccount[]; provider
       {extra.length > 0 && (
         <button
           onClick={() => setExpanded(e => !e)}
-          className="text-[11px] pt-3 text-left font-medium transition-opacity hover:opacity-70"
-          style={{ color: expanded ? 'var(--ink-muted)' : 'var(--brand)' }}>
-          {expanded ? '↑ Show less' : `+${extra.length} more accounts`}
+          className="mt-3 self-start text-[12.5px] font-medium px-3 py-1.5 rounded-full border transition-colors hover:border-[var(--orange)]"
+          style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
+          {expanded ? 'Show less' : `Show ${extra.length} more`}
         </button>
       )}
     </div>
@@ -960,97 +1277,89 @@ function AnalyticsTable({ data }: { data: DashboardData }) {
   const rows = sortByNewest(data.analytics, data.campaigns)
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="border-b" style={{ borderColor: 'var(--line-strong)' }}>
-            {TABLE_HEADERS.map(h => (
-              <th
-                key={h}
-                className={`py-2.5 px-3 font-bold uppercase tracking-wider text-[10px] ${
-                  h === 'Campaign' ? 'text-left' : 'text-right'
-                }`}
-                style={{ color: 'var(--ink-soft)' }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(a => {
-            const rate = replyRate(a.sent, a.replies)
-
-            return (
-              <tr
-                key={a.campaignId}
-                className="border-b hover:bg-black/[0.015] transition-colors"
-                style={{ borderColor: 'var(--line)' }}>
-                <td className="py-3 px-3 max-w-[200px]">
-                  <div className="truncate font-medium" style={{ color: 'var(--ink)' }}>
-                    {a.campaignName}
-                  </div>
-                </td>
-                <Cell>{a.leads.toLocaleString()}</Cell>
-                <Cell>{a.sent.toLocaleString()}</Cell>
-                <Cell>{a.replies.toLocaleString()}</Cell>
-                <td
-                  className="py-3 px-3 text-right font-mono font-semibold"
-                  style={{ color: a.positiveReplies > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
-                  {a.positiveReplies.toLocaleString()}
-                </td>
-                <td className="py-3 px-3 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
-                  {rate.toFixed(1)}%
-                </td>
-                <td
-                  className="py-3 px-3 text-right font-mono font-semibold"
-                  style={{ color: a.opportunityValue > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
-                  {a.opportunityValue > 0 ? `$${a.opportunityValue.toLocaleString()}` : '—'}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+    <TableFrame
+      headers={TABLE_HEADERS}
+      leftAligned={['Campaign']}
+      rows={rows.map(a => (
+        <tr key={a.campaignId} className="row-hover border-t" style={{ borderColor: 'var(--line)' }}>
+          <td className="py-3.5 px-4 max-w-[320px]">
+            <div className="truncate font-medium" style={{ color: 'var(--ink)' }}>
+              {a.campaignName}
+            </div>
+          </td>
+          <Cell>{a.leads.toLocaleString()}</Cell>
+          <Cell>{a.sent.toLocaleString()}</Cell>
+          <Cell>{a.replies.toLocaleString()}</Cell>
+          <PositiveCell value={a.positiveReplies} />
+          <RateCell value={replyRate(a.sent, a.replies)} />
+          <td
+            className="py-3.5 px-4 text-right font-mono font-medium"
+            style={{ color: a.opportunityValue > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
+            {a.opportunityValue > 0 ? `$${a.opportunityValue.toLocaleString()}` : '—'}
+          </td>
+        </tr>
+      ))}
+    />
   )
 }
 
 function Cell({ children }: { children: React.ReactNode }) {
   return (
-    <td className="py-3 px-3 text-right font-mono" style={{ color: 'var(--ink-soft)' }}>
+    <td className="py-3.5 px-4 text-right font-mono" style={{ color: 'var(--ink-soft)' }}>
       {children}
+    </td>
+  )
+}
+
+function PositiveCell({ value }: { value: number }) {
+  return (
+    <td className="py-3.5 px-4 text-right font-mono font-medium" style={{ color: value > 0 ? 'var(--green-ink)' : 'var(--ink-muted)' }}>
+      {value.toLocaleString()}
+    </td>
+  )
+}
+
+function RateCell({ value }: { value: number }) {
+  return (
+    <td className="py-3.5 px-4 text-right font-mono font-medium" style={{ color: 'var(--ink)' }}>
+      {value.toFixed(1)}%
     </td>
   )
 }
 
 function LoadingState() {
   return (
-    <div className="flex flex-col items-center justify-center py-36 gap-4" style={{ color: 'var(--ink-muted)' }}>
+    <div
+      className="rounded-2xl border flex flex-col items-center justify-center py-32 gap-4"
+      style={{ ...CARD_STYLE, color: 'var(--ink-muted)' }}>
       <div
-        className="w-6 h-6 rounded-full border-2 animate-spin-slow"
-        style={{ borderColor: 'var(--line-strong)', borderTopColor: 'var(--brand)' }}
+        className="w-7 h-7 rounded-full border-[2.5px] animate-spin-slow"
+        style={{ borderColor: 'var(--line-strong)', borderTopColor: 'var(--orange)' }}
       />
-      <div className="text-[13px]">Syncing…</div>
+      <div className="text-[13px]">Syncing live data…</div>
     </div>
   )
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center py-36 gap-2">
-      <div className="text-[14px] font-semibold" style={{ color: 'var(--red-ink)' }}>
+    <div className="rounded-2xl border flex flex-col items-center justify-center py-28 gap-3 px-6 text-center" style={CARD_STYLE}>
+      <div className="font-display text-[18px] font-semibold" style={{ color: 'var(--red-ink)' }}>
         Sync failed
       </div>
-      <div className="text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+      <div className="text-[13px] max-w-[520px]" style={{ color: 'var(--ink-muted)' }}>
         {message}
       </div>
+      <button onClick={onRetry} className="btn-orange mt-3 px-5 py-2.5 rounded-full text-[13px] font-medium">
+        Try again
+      </button>
     </div>
   )
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="py-8 text-center text-[12px]" style={{ color: 'var(--ink-muted)' }}>
+    <div className="py-10 text-center text-[13px]" style={{ color: 'var(--ink-muted)' }}>
       {children}
     </div>
   )

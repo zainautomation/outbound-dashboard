@@ -101,51 +101,50 @@ a stray leading space in a NAME reaches the UI otherwise.
 - `src/lib/metrics.ts` — reply/bounce rate, warmup averages, sorting, `sumAnalytics()` totals
 
 Derived metrics belong in `src/lib/metrics.ts`, not inline in a component —
-`Workspace`, `AdminOverview` and `AIAssistant` all consume them.
+`Workspace` and `AdminOverview` consume them.
 
 One failing client must never blank the admin overview: `/api/overview` catches
 per-client errors and reports them in that client's rollup.
 
 ## Design System
 
-Light theme, **dark navy blue is the brand anchor** on cool pearl-white
-surfaces; orange is a sparing accent only. Colors are CSS variables in
-`globals.css`, mirrored in `tailwind.config.js` — always use them, never
-hardcode hex in new UI.
+Matches **zutomate.com**: deep navy structure, warm pearl surfaces, orange for
+action. Colors are CSS variables in `globals.css`, mirrored in
+`tailwind.config.js` — always use them, never hardcode hex in new UI.
 
 | Variable | Use |
 |---|---|
-| `var(--pearl)` | Page background (cool white) |
-| `var(--surface)` | Cards, nav (white, raised) |
-| `var(--surface-sunken)` | Inputs, progress tracks, neutral pills |
-| `var(--brand)` | Primary — logo, CTA buttons, chart replies, AI button (navy `#16294a`) |
-| `var(--brand-deep)` | Login brand panel, AI header (deepest navy) |
-| `var(--brand-hover)` | Button hover, logo gradient top |
-| `var(--brand-wash)` | Pale-navy chart "sent" fill |
-| `var(--ink)` / `--ink-soft` / `--ink-muted` | Navy text scale (primary numbers use `--ink`) |
-| `var(--line)` / `var(--line-strong)` | Hairlines, borders |
-| `var(--orange)` / `--orange-ink` | **Accent only** — live dot, section-title tick, login feature ticks |
-| `var(--green-ink)` / `--green-wash` | Positive replies, pipeline $, healthy, Active pill |
+| `var(--navy)` `#0d1b2e` | Top nav, hero band, login panel, client avatars |
+| `var(--navy-2)` / `--navy-3` | Featured (positive-replies) stat card gradient |
+| `var(--orange)` `#f26522` / `--orange-hover` | CTAs (Sign in, Try again), logo arrow, reply bars, active tab underline, live dot |
+| `var(--pearl)` `#f7f5f1` | Page background (warm, as on the site) |
+| `var(--surface)` / `--surface-sunken` | Cards / table headers, tracks, chips |
+| `var(--ink)` / `--ink-soft` / `--ink-muted` | Navy text scale |
+| `var(--on-navy*)` | Text and hairlines on navy |
+| `var(--line)` / `--line-strong` | Hairlines, borders |
+| `var(--green-ink)` / `--green-bright` / `--green-wash` | Positive replies, pipeline $, healthy, Active pill |
 | `var(--amber-ink)` | Elevated bounce rate, below-threshold warmup |
 | `var(--red-ink)` / `--red-wash` | Errors, failed sync |
 
-**Navy is dominant; orange is a jewel accent.** The previous design leaned
-orange (logo, every CTA, all section titles, key numbers) and read as generic —
-that was deliberately pulled back. Do not reintroduce orange as a fill for
-logos, buttons, or primary numbers. Its only sanctioned uses are the `LiveIndicator`
-dot, the small tick in `SectionTitle`, and the login feature ticks.
+Layout: sticky navy `TopNav` (logo, role chip, live indicator, refresh, sign
+out; admin gets client tabs with an orange underline), then a navy `Hero` band
+whose stat cards overlap its bottom edge. Content sits in white `Panel`s
+(rounded-2xl, title + subtitle + optional right slot). Long tables go through
+`TableFrame`, which shows 12 rows with a "Show all" toggle.
+
+**Logo** — `Logo` / `LogoMark`: a Z whose diagonal is an orange up-right arrow,
+followed by "utomate" (the construction of the zutomate.com logo, redrawn as
+vectors). `tone="light"` on navy, `tone="dark"` on pearl. The favicon is
+`src/app/icon.svg`. Numbers and buttons other than CTAs stay navy — orange is
+for action and the brand arrow, not for figures.
 
 **Positive replies** (Instantly opportunities / Smartlead "interested") are
-always green with the `DollarBadge` — a green coin with a `$`. That badge is the
-one place the dollar motif appears; keep it tied to positive-reply figures.
+always green with the `DollarBadge`; the featured stat card shows them on navy.
 
-The logo is `LogoTile` — a deep-navy gradient squircle with a white monogram Z
-(`ZIcon`), used at every size. Login uses a full-height `--brand-deep` panel.
-
-Fonts: `Bricolage Grotesque` (UI, `--font-sans`, the Zutomate brand font),
-`DM Mono` (numbers, emails, `--font-mono`). Headings use `font-bold` (700) —
-deliberately not `extrabold`. Section titles are navy (`--ink-soft`), uppercase,
-`tracking-widest`, led by an orange tick and followed by a hairline.
+Fonts (same as the site): `Bricolage Grotesque` for headings and big figures
+(`font-display`, weight 500–600, negative tracking), `DM Sans` for body and
+labels (`--font-sans`), `DM Mono` for table numbers and emails (`--font-mono`).
+Uppercase labels use DM Sans with wide letter-spacing.
 
 ## What Does Not Exist Yet
 

@@ -19,18 +19,20 @@ module.exports = {
           DEFAULT: 'var(--line)',
           strong: 'var(--line-strong)',
         },
-        brand: {
-          DEFAULT: 'var(--brand)',
-          deep: 'var(--brand-deep)',
-          hover: 'var(--brand-hover)',
+        navy: {
+          DEFAULT: 'var(--navy)',
+          2: 'var(--navy-2)',
+          3: 'var(--navy-3)',
         },
-        accent: {
+        orange: {
           DEFAULT: 'var(--orange)',
+          hover: 'var(--orange-hover)',
           ink: 'var(--orange-ink)',
         },
       },
       fontFamily: {
         sans: ['var(--font-sans)'],
+        display: ['var(--font-display)'],
         mono: ['var(--font-mono)'],
       },
     },

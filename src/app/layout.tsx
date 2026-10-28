@@ -1,13 +1,19 @@
 import type { Metadata } from 'next'
-import { Bricolage_Grotesque, DM_Mono } from 'next/font/google'
+import { Bricolage_Grotesque, DM_Mono, DM_Sans } from 'next/font/google'
 import './globals.css'
 
-// The Zutomate brand font. Headings use bold (700), not extrabold, so it
-// reads confident rather than heavy.
-const sans = Bricolage_Grotesque({
+// Same pairing as zutomate.com: Bricolage Grotesque for headings and figures,
+// DM Sans for body copy and labels.
+const display = Bricolage_Grotesque({
+  subsets: ['latin'],
+  variable: '--font-display',
+  weight: ['400', '500', '600', '700'],
+})
+
+const sans = DM_Sans({
   subsets: ['latin'],
   variable: '--font-sans',
-  weight: ['400', '500', '600', '700', '800'],
+  weight: ['300', '400', '500', '600', '700'],
 })
 
 const dmMono = DM_Mono({
@@ -17,14 +23,14 @@ const dmMono = DM_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Zutomate',
-  description: 'Multi-client Instantly dashboard',
+  title: 'Zutomate — Outbound Dashboard',
+  description: 'Live outbound performance across every Zutomate client',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${sans.variable} ${dmMono.variable}`}>
+      <body className={`${display.variable} ${sans.variable} ${dmMono.variable}`}>
         {children}
       </body>
     </html>
