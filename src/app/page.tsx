@@ -300,22 +300,21 @@ function Sidebar({ session, clients, selectedClient, onSelectClient, view, onVie
         <Logo height={22} tone="light" />
       </div>
 
-      <div className="mx-4 mb-5 rounded-xl px-3 py-3 flex items-center gap-3" style={{ background: 'rgba(255,255,255,0.05)' }}>
-        <span
-          className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-[13px] font-semibold flex-shrink-0"
-          style={{ background: 'var(--orange)', color: '#fff' }}>
-          {current ? initials(current.name) : 'Z'}
-        </span>
-        <div className="min-w-0">
-          <div className="text-[13.5px] font-medium text-white truncate">{current ? current.name : 'All clients'}</div>
-          <div className="text-[11px] uppercase mt-0.5" style={{ color: 'var(--on-navy-muted)', letterSpacing: '1.2px' }}>
-            {admin ? 'Admin' : 'Client portal'}
+      <div className="mx-4 mb-4">
+        {admin ? (
+          <ClientSwitcher clients={clients} selectedClient={selectedClient} onSelect={onSelectClient} />
+        ) : (
+          <div className="rounded-xl px-3.5 py-3" style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <div className="text-[14px] font-medium text-white truncate">{current?.name}</div>
+            <div className="text-[11px] uppercase mt-0.5" style={{ color: 'var(--on-navy-muted)', letterSpacing: '1.2px' }}>
+              Client portal
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 pb-4">
-        {current && (
+      <nav className="relative z-0 flex-1 overflow-y-auto px-3 pb-4">
+        {current ? (
           <>
             <NavLabel>Workspace</NavLabel>
             {workspaceViews(hasLinkedIn).map(v => (
@@ -324,31 +323,12 @@ function Sidebar({ session, clients, selectedClient, onSelectClient, view, onVie
               </NavItem>
             ))}
           </>
-        )}
-
-        {admin && (
+        ) : (
           <>
-            <NavLabel>Clients</NavLabel>
-            <NavItem active={selectedClient === ALL_CLIENTS} onClick={() => onSelectClient(ALL_CLIENTS)} icon="clients">
-              All clients
+            <NavLabel>Agency</NavLabel>
+            <NavItem active onClick={() => onSelectClient(ALL_CLIENTS)} icon="clients">
+              All clients overview
             </NavItem>
-            {clients.map(c => (
-              <button
-                key={c.id}
-                onClick={() => onSelectClient(c.id)}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13.5px] transition-colors hover:bg-white/5 text-left"
-                style={{
-                  color: selectedClient === c.id ? '#fff' : 'var(--on-navy-soft)',
-                  background: selectedClient === c.id ? 'rgba(255,255,255,0.08)' : undefined,
-                }}>
-                <span
-                  className="w-[18px] h-[18px] rounded-md flex items-center justify-center text-[9px] font-semibold flex-shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.1)', color: '#fff' }}>
-                  {initials(c.name).slice(0, 1)}
-                </span>
-                <span className="truncate">{c.name}</span>
-              </button>
-            ))}
           </>
         )}
       </nav>
@@ -359,6 +339,102 @@ function Sidebar({ session, clients, selectedClient, onSelectClient, view, onVie
         </NavItem>
       </div>
     </aside>
+  )
+}
+
+/** Admin-only dropdown in the sidebar: pick a client to open its workspace. */
+function ClientSwitcher({
+  clients,
+  selectedClient,
+  onSelect,
+}: {
+  clients: ClientSummary[]
+  selectedClient: string
+  onSelect: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const current = clients.find(c => c.id === selectedClient)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [open])
+
+  const pick = (id: string) => {
+    onSelect(id)
+    setOpen(false)
+  }
+
+  const options = [{ id: ALL_CLIENTS, name: 'All clients' }, ...clients]
+
+  return (
+    <div ref={ref} className="relative z-50">
+      <div className="px-1 pb-1.5 text-[10.5px] uppercase font-medium" style={{ color: 'var(--on-navy-muted)', letterSpacing: '1.4px' }}>
+        Client
+      </div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 border text-left transition-colors hover:bg-white/[0.08]"
+        style={{ background: 'rgba(255,255,255,0.05)', borderColor: open ? 'rgba(255,255,255,0.25)' : 'var(--on-navy-line)' }}>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-medium text-white truncate">{current ? current.name : 'All clients'}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: 'var(--on-navy-muted)' }}>
+            {current ? 'Client workspace' : `${clients.length} workspaces`}
+          </div>
+        </div>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden
+          className="flex-shrink-0 transition-transform"
+          style={{ color: 'var(--on-navy-soft)', transform: open ? 'rotate(180deg)' : undefined }}>
+          <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-0 right-0 mt-1.5 z-50 rounded-xl border p-1.5 max-h-[60vh] overflow-y-auto"
+          style={{ background: 'var(--navy-2)', borderColor: 'rgba(255,255,255,0.14)', boxShadow: '0 16px 40px rgba(0,0,0,0.45)' }}>
+          {options.map((o, i) => {
+            const selected = o.id === selectedClient
+            return (
+              <div key={o.id || 'all'}>
+                {i === 1 && <div className="my-1 h-px" style={{ background: 'var(--on-navy-line)' }} />}
+                <button
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => pick(o.id)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[13.5px] text-left transition-colors hover:bg-white/[0.07]"
+                  style={{ color: selected ? '#fff' : 'var(--on-navy-soft)', background: selected ? 'rgba(255,255,255,0.08)' : undefined }}>
+                  <span className="truncate">{o.name}</span>
+                  {selected && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden className="flex-shrink-0">
+                      <path d="m5 12 5 5 9-10" stroke="var(--orange)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
