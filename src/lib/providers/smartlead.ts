@@ -1,5 +1,5 @@
 import { num, openMcpSession, parseToolJson } from './mcp'
-import type { Campaign, CampaignAnalytics, EmailAccount, ProviderData } from '../types'
+import type { Campaign, CampaignAnalytics, CampaignStatus, EmailAccount, ProviderData } from '../types'
 
 interface SmartleadCampaign {
   id: number
@@ -13,6 +13,8 @@ interface SmartleadAnalytics {
   id: number
   name: string
   sent_count?: string | number
+  /** Distinct leads emailed at least once. */
+  unique_sent_count?: string | number
   reply_count?: string | number
   bounce_count?: string | number
   total_count?: string | number
@@ -47,6 +49,23 @@ export function extractApiKey(mcpUrl: string): string | null {
   const named = new URLSearchParams(query).get('smartlead_user_api_key')
   if (named) return named
   return query.includes('=') ? null : decodeURIComponent(query)
+}
+
+/** Smartlead statuses: ACTIVE, PAUSED, COMPLETED, DRAFTED, STOPPED. */
+function toStatus(raw: string | undefined): CampaignStatus {
+  switch (raw?.toUpperCase()) {
+    case 'ACTIVE':
+      return 'active'
+    case 'PAUSED':
+      return 'paused'
+    case 'COMPLETED':
+    case 'STOPPED':
+      return 'completed'
+    case 'DRAFTED':
+      return 'draft'
+    default:
+      return 'error'
+  }
 }
 
 /** Smartlead has no 0–100 warmup score, so use inbox placement as the analogue. */
@@ -88,12 +107,11 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
     const campaignList = Array.isArray(rawCampaigns) ? rawCampaigns : []
     const accountList = Array.isArray(rawAccounts) ? rawAccounts : []
 
-    const campaigns: Campaign[] = campaignList.map(c => ({
-      id: String(c.id),
-      name: c.name,
-      active: c.status?.toUpperCase() === 'ACTIVE',
-      createdAt: c.created_at,
-    }))
+    // get_campaigns' order is the order Smartlead shows; analytics follow it.
+    const campaigns: Campaign[] = campaignList.map(c => {
+      const status = toStatus(c.status)
+      return { id: String(c.id), name: c.name, status, active: status === 'active', createdAt: c.created_at }
+    })
 
     // Aggregate stats are only available one campaign at a time.
     const analytics: CampaignAnalytics[] = (
@@ -104,6 +122,7 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
             campaignId: String(c.id),
             campaignName: a.name ?? c.name,
             leads: num(a.total_count),
+            contacted: num(a.unique_sent_count),
             sent: num(a.sent_count),
             replies: num(a.reply_count),
             positiveReplies: num(a.campaign_lead_stats?.interested),
@@ -129,8 +148,8 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
       }
     })
 
-    // Smartlead's MCP surface has no unread-inbox count.
-    return { campaigns, analytics, accounts }
+    // Smartlead's MCP surface has no unread-inbox count and no day-level series.
+    return { campaigns, analytics, accounts, daily: [] }
   } finally {
     session.close()
   }

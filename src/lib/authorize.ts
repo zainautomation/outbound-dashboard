@@ -12,10 +12,27 @@ export interface Credentials {
  */
 export function redact(message: string): string {
   let safe = message
-  for (const { mcpUrl } of getClients()) {
-    safe = safe.split(mcpUrl).join('[mcp-url]')
+  for (const { mcpUrl, linkedinMcpUrl } of getClients()) {
+    for (const secret of [mcpUrl, linkedinMcpUrl, ...queryValues(linkedinMcpUrl)]) {
+      if (secret) safe = safe.split(secret).join('[redacted]')
+    }
   }
   return safe
+}
+
+/** A key can also leak on its own (HeyReach's xMcpKey), raw or URL-decoded. */
+function queryValues(url: string | undefined): string[] {
+  const query = url?.split('?')[1]
+  if (!query) return []
+  return query.split('&').flatMap(pair => {
+    const raw = pair.split('=')[1]
+    if (!raw || raw.length < 12) return []
+    try {
+      return [raw, decodeURIComponent(raw)]
+    } catch {
+      return [raw]
+    }
+  })
 }
 
 /**

@@ -47,6 +47,21 @@ the word "MCP". Before changing an adapter, know these differences:
 | Body | pure JSON | prose prefix then JSON — always run through `parseToolJson()` |
 | Warmup | `stat_warmup_score` 0–100 | none; derived from inbox placement |
 | Unread | yes | not exposed — `unreadCount` is undefined, and the UI shows "—" |
+| Pagination | `list_campaigns` / `list_accounts` return **10 per page** by default — always page with `limit: 100` + `starting_after` | lists return everything |
+| Status | 0 draft, 1 active, 2 paused, 3 completed, 4 subsequences, negatives = holds | `ACTIVE` / `PAUSED` / `COMPLETED` / `DRAFTED` / `STOPPED` |
+| Daily series | `get_daily_campaign_analytics` | none |
+
+Instantly sometimes answers `initialize` without an `mcp-session-id`;
+`openHttpSession` retries. Campaigns are shown **in the platform's own order**
+(the order the list endpoint returns) — `orderLikeCampaigns()` aligns analytics
+to it. Never re-sort campaigns by volume or date.
+
+**LinkedIn — HeyReach** (`heyreach.ts`, optional per client via
+`CLIENT_{ID}_LINKEDIN_MCP_URL`): stateless Streamable HTTP (no session id,
+transport `'http-stateless'`), key in the `xMcpKey` query. `get_overall_stats`
+returns lifetime `overallStats` + `byDayStats`, filterable by `campaignIds`
+(one call per campaign). A HeyReach failure is reported as `linkedinError` and
+never breaks the email data. `redact()` also strips the raw and decoded key.
 
 The Smartlead MCP URL may carry its key as `?smartlead_user_api_key=KEY` or as a
 bare `?KEY`. `extractApiKey()` handles both; the bare form is *not* forwarded by
@@ -80,6 +95,7 @@ CLIENT_{ID}_MCP_URL=https://mcp.instantly.ai/mcp/API_KEY
 CLIENT_{ID}_USERNAME=login
 CLIENT_{ID}_PASSWORD=password
 CLIENT_{ID}_PROVIDER=instantly|smartlead   # optional; inferred from the host
+CLIENT_{ID}_LINKEDIN_MCP_URL=https://mcp.heyreach.io/mcp?xMcpKey=KEY   # optional
 ```
 
 `src/lib/clients.ts` scans `process.env` for keys matching `CLIENT_*_NAME`. The
@@ -94,7 +110,8 @@ a stray leading space in a NAME reaches the UI otherwise.
 - `src/app/api/sync/route.ts` — POST: one client's workspace
 - `src/app/api/overview/route.ts` — POST: admin-only, every client at once
 - `src/lib/providers/mcp.ts` — both MCP transports, `parseToolJson()`, `num()`
-- `src/lib/providers/{instantly,smartlead}.ts` — per-platform adapters
+- `src/lib/providers/{instantly,smartlead}.ts` — per-platform email adapters
+- `src/lib/providers/heyreach.ts` — LinkedIn (HeyReach) adapter
 - `src/lib/authorize.ts` — credential checks and `redact()`
 - `src/lib/clients.ts` — env-var client registry
 - `src/lib/types.ts` — types shared between API routes and UI
@@ -126,13 +143,18 @@ action. Colors are CSS variables in `globals.css`, mirrored in
 | `var(--amber-ink)` | Elevated bounce rate, below-threshold warmup |
 | `var(--red-ink)` / `--red-wash` | Errors, failed sync |
 
-Layout: sticky navy `TopNav` (logo, role chip, live indicator, refresh, sign
-out; admin gets client tabs with an orange underline), then a navy `Hero` band
-whose stat cards overlap its bottom edge. Content sits in white `Panel`s
-(rounded-2xl, title + subtitle + optional right slot). Long tables go through
-`TableFrame`, which shows 12 rows with a "Show all" toggle.
+Layout (modelled on StackOptimise / Northline): a navy left `Sidebar`
+(logo, workspace card, Workspace views — Overview / Email campaigns / LinkedIn
+/ Sending inboxes — and, for admins, the client list); `MobileNav` replaces it
+below `lg`. No refresh button or sync timestamp — data refreshes silently every
+30s. Pages open with `PageHeader`, then two `KpiRow`s: volume (sent, prospects,
+replies, positive — with `Sparkline`s) and rates (reply %, positive %,
+**Email:lead ratio** highlighted in orange, bounce %), each rate card carrying
+a grey fraction chip. Then a `TrendChart` (bars = volume, orange line =
+replies, last 30 days) and white `Panel`s. Long tables go through `TableFrame`
+(12 rows + "Show all"); status filters via `FilterToggle`.
 
-**Logo** — `Logo` / `LogoMark`: a Z whose diagonal is an orange up-right arrow,
+**Logo** — `Logo`: a Z whose diagonal is an orange up-right arrow,
 followed by "utomate" (the construction of the zutomate.com logo, redrawn as
 vectors). `tone="light"` on navy, `tone="dark"` on pearl. The favicon is
 `src/app/icon.svg`. Numbers and buttons other than CTAs stay navy — orange is

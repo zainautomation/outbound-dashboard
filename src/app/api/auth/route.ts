@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   const client = findClientByCredentials(username, password)
   if (client) {
-    const body: AuthResponse = { role: 'user', username, clientId: client.id }
+    const body: AuthResponse = { role: 'user', username, clientId: client.id, client: toSummary(client) }
     return NextResponse.json(body)
   }
 

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorizeAdmin, redact } from '@/lib/authorize'
-import { averageWarmupScore, sumAnalytics } from '@/lib/metrics'
+import { averageWarmupScore, mergeDaily, sumAnalytics } from '@/lib/metrics'
 import { fetchProviderData } from '@/lib/providers'
-import type { AttributedCampaign, ClientRollup, OverviewData } from '@/lib/types'
+import { fetchHeyReach } from '@/lib/providers/heyreach'
+import type { AttributedCampaign, ClientRollup, DailyPoint, OverviewData } from '@/lib/types'
 
 /** Every client is fetched on one request, and Smartlead needs several round trips. */
 export const maxDuration = 60
@@ -30,16 +31,23 @@ export async function POST(req: NextRequest) {
           provider: client.provider,
         }
 
-        try {
-          const data = await fetchProviderData(client.provider, client.mcpUrl)
-          const activeById = new Map(data.campaigns.map(c => [c.id, c]))
+        // LinkedIn totals are a bonus — a HeyReach failure leaves them out.
+        const linkedinPromise = client.linkedinMcpUrl
+          ? fetchHeyReach(client.linkedinMcpUrl).then(d => d.totals, () => undefined)
+          : Promise.resolve(undefined)
 
-          const campaigns: AttributedCampaign[] = data.analytics.map(a => ({
-            ...a,
-            ...identity,
-            active: activeById.get(a.campaignId)?.active ?? false,
-            createdAt: activeById.get(a.campaignId)?.createdAt,
-          }))
+        try {
+          const [data, linkedin] = await Promise.all([
+            fetchProviderData(client.provider, client.mcpUrl),
+            linkedinPromise,
+          ])
+          const byId = new Map(data.campaigns.map(c => [c.id, c]))
+
+          // Already in the platform's order — keep it.
+          const campaigns: AttributedCampaign[] = data.analytics.map(a => {
+            const status = byId.get(a.campaignId)?.status ?? 'error'
+            return { ...a, ...identity, status, active: status === 'active' }
+          })
 
           const rollup: ClientRollup = {
             ...identity,
@@ -47,38 +55,45 @@ export async function POST(req: NextRequest) {
             activeCampaigns: data.campaigns.filter(c => c.active).length,
             accountCount: data.accounts.length,
             avgWarmup: averageWarmupScore(data.accounts),
+            linkedin,
           }
 
-          return { rollup, campaigns }
+          return { rollup, campaigns, daily: data.daily }
         } catch (err) {
           const rollup: ClientRollup = {
             ...identity,
             totalSent: 0,
+            totalContacted: 0,
             totalReplies: 0,
             totalPositiveReplies: 0,
             totalBounces: 0,
             totalPipeline: 0,
             activeCampaigns: 0,
             accountCount: 0,
+            linkedin: await linkedinPromise,
             error: redact(err instanceof Error ? err.message : 'Sync failed'),
           }
-          return { rollup, campaigns: [] as AttributedCampaign[] }
+          return { rollup, campaigns: [] as AttributedCampaign[], daily: [] as DailyPoint[] }
         }
       }),
     )
 
-    const campaigns = results.flatMap(r => r.campaigns).sort((a, b) => b.sent - a.sent)
+    const campaigns = results.flatMap(r => r.campaigns)
     const rollups = results.map(r => r.rollup)
+    const sum = (key: keyof Pick<ClientRollup, 'totalSent' | 'totalContacted' | 'totalReplies' | 'totalPositiveReplies' | 'totalBounces' | 'totalPipeline' | 'activeCampaigns'>) =>
+      rollups.reduce((s, c) => s + c[key], 0)
 
     const overview: OverviewData = {
       clients: rollups,
       campaigns,
-      totalSent: rollups.reduce((s, c) => s + c.totalSent, 0),
-      totalReplies: rollups.reduce((s, c) => s + c.totalReplies, 0),
-      totalPositiveReplies: rollups.reduce((s, c) => s + c.totalPositiveReplies, 0),
-      totalBounces: rollups.reduce((s, c) => s + c.totalBounces, 0),
-      totalPipeline: rollups.reduce((s, c) => s + c.totalPipeline, 0),
-      activeCampaigns: rollups.reduce((s, c) => s + c.activeCampaigns, 0),
+      totalSent: sum('totalSent'),
+      totalContacted: sum('totalContacted'),
+      totalReplies: sum('totalReplies'),
+      totalPositiveReplies: sum('totalPositiveReplies'),
+      totalBounces: sum('totalBounces'),
+      totalPipeline: sum('totalPipeline'),
+      activeCampaigns: sum('activeCampaigns'),
+      daily: mergeDaily(results.map(r => r.daily)),
       syncedAt: new Date().toISOString(),
     }
 

@@ -1,13 +1,14 @@
 /**
- * Minimal MCP client covering the two transports our providers use.
+ * Minimal MCP client covering the transports our providers use.
  *
- *  - 'http' (Instantly): Streamable HTTP. Each POST returns its own response
- *    body containing one SSE `data:` frame.
+ *  - 'http' (Instantly): Streamable HTTP with a session. Each POST returns its
+ *    own response body containing one SSE `data:` frame.
+ *  - 'http-stateless' (HeyReach): Streamable HTTP with no session id.
  *  - 'sse'  (Smartlead): the older SSE transport. A GET opens a stream that
  *    stays open; the server replies with a POST endpoint, and every response
  *    arrives back on that one stream, matched by JSON-RPC id.
  */
-export type Transport = 'http' | 'sse'
+export type Transport = 'http' | 'http-stateless' | 'sse'
 
 const PROTOCOL_VERSION = '2024-11-05'
 const CLIENT_INFO = { name: 'zutomate', version: '1.0' }
@@ -49,29 +50,43 @@ function unwrap(result: any, tool: string): string {
   return text
 }
 
-async function openHttpSession(url: string): Promise<McpSession> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: SSE_HEADERS,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
-    }),
-  })
+/** Instantly intermittently answers initialize without a session id; retrying fixes it. */
+const INIT_ATTEMPTS = 4
 
-  const sessionId = res.headers.get('mcp-session-id')
-  if (!sessionId) throw new Error('MCP server did not return a session ID')
+/**
+ * Streamable HTTP. `stateful` servers (Instantly) must hand back an
+ * `mcp-session-id`; stateless ones (HeyReach) never do, and accept bare calls.
+ */
+async function openHttpSession(url: string, stateful: boolean): Promise<McpSession> {
+  let sessionId: string | null = null
+
+  for (let attempt = 0; attempt < INIT_ATTEMPTS; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: SSE_HEADERS,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
+      }),
+    })
+    await res.text()
+    if (!res.ok) throw new Error(`MCP initialize failed (${res.status})`)
+    sessionId = res.headers.get('mcp-session-id')
+    if (sessionId || !stateful) break
+  }
+  if (stateful && !sessionId) throw new Error('MCP server did not return a session ID')
 
   let nextId = 2
+  const headers = sessionId ? { ...SSE_HEADERS, 'mcp-session-id': sessionId } : SSE_HEADERS
 
   return {
     async call(tool, args = {}) {
       const id = nextId++
       const toolRes = await fetch(url, {
         method: 'POST',
-        headers: { ...SSE_HEADERS, 'mcp-session-id': sessionId },
+        headers,
         body: JSON.stringify({
           jsonrpc: '2.0',
           id,
@@ -80,8 +95,10 @@ async function openHttpSession(url: string): Promise<McpSession> {
         }),
       })
 
-      const [frame] = parseFrames(await toolRes.text())
-      if (!frame) throw new Error(`No SSE data from tool ${tool}`)
+      const body = await toolRes.text()
+      // Responses arrive as one SSE frame, or as plain JSON from stateless servers.
+      const [frame] = parseFrames(body).concat(body.trim().startsWith('{') ? [JSON.parse(body)] : [])
+      if (!frame) throw new Error(`No data from tool ${tool}`)
       if (frame.error) throw new Error(`MCP error on ${tool}: ${frame.error.message}`)
       return unwrap(frame.result, tool)
     },
@@ -176,7 +193,8 @@ async function openSseSession(url: string): Promise<McpSession> {
 }
 
 export function openMcpSession(url: string, transport: Transport): Promise<McpSession> {
-  return transport === 'sse' ? openSseSession(url) : openHttpSession(url)
+  if (transport === 'sse') return openSseSession(url)
+  return openHttpSession(url, transport === 'http')
 }
 
 /**

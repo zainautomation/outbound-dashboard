@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authorizeClient, redact } from '@/lib/authorize'
 import { sumAnalytics } from '@/lib/metrics'
 import { fetchProviderData } from '@/lib/providers'
+import { fetchHeyReach } from '@/lib/providers/heyreach'
 import type { DashboardData } from '@/lib/types'
 
-/** Smartlead needs a round trip per campaign and per account. */
+/** Smartlead and HeyReach need a round trip per campaign. */
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
@@ -16,7 +17,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const provider = await fetchProviderData(client.provider, client.mcpUrl)
+    // LinkedIn is optional and must never take the email workspace down with it.
+    const [provider, linkedin] = await Promise.all([
+      fetchProviderData(client.provider, client.mcpUrl),
+      client.linkedinMcpUrl
+        ? fetchHeyReach(client.linkedinMcpUrl).then(
+            data => ({ data }),
+            err => ({ error: redact(err instanceof Error ? err.message : 'LinkedIn sync failed') }),
+          )
+        : undefined,
+    ])
 
     const data: DashboardData = {
       ...provider,
@@ -25,6 +35,8 @@ export async function POST(req: NextRequest) {
       clientName: client.name,
       provider: client.provider,
       activeCampaigns: provider.campaigns.filter(c => c.active).length,
+      linkedin: linkedin && 'data' in linkedin ? linkedin.data : undefined,
+      linkedinError: linkedin && 'error' in linkedin ? linkedin.error : undefined,
       syncedAt: new Date().toISOString(),
     }
 

@@ -3,6 +3,8 @@ import type { ClientSummary, ProviderId } from './types'
 
 export interface Client extends ClientSummary {
   mcpUrl: string
+  /** HeyReach MCP URL for LinkedIn outreach, when configured. */
+  linkedinMcpUrl?: string
   username: string
   password: string
 }
@@ -16,7 +18,7 @@ function env(key: string): string | undefined {
  * Clients are declared entirely through env vars, so onboarding one needs no
  * code change: CLIENT_{ID}_NAME / _MCP_URL / _USERNAME / _PASSWORD, plus an
  * optional _PROVIDER ('instantly' | 'smartlead') when the MCP host is
- * ambiguous. Entries missing any required key are skipped rather than
+ * ambiguous, and an optional _LINKEDIN_MCP_URL (HeyReach). Entries missing any required key are skipped rather than
  * half-configured.
  */
 export function getClients(): Client[] {
@@ -35,12 +37,25 @@ export function getClients(): Client[] {
     const provider: ProviderId =
       configured && isProviderId(configured) ? configured : detectProvider(mcpUrl)
 
-    return [{ id: id.toLowerCase(), name, mcpUrl, username, password, provider }]
+    const linkedinMcpUrl = env(`CLIENT_${id}_LINKEDIN_MCP_URL`)
+
+    return [
+      {
+        id: id.toLowerCase(),
+        name,
+        mcpUrl,
+        linkedinMcpUrl,
+        hasLinkedIn: Boolean(linkedinMcpUrl),
+        username,
+        password,
+        provider,
+      },
+    ]
   })
 }
 
 export function toSummary(client: Client): ClientSummary {
-  return { id: client.id, name: client.name, provider: client.provider }
+  return { id: client.id, name: client.name, provider: client.provider, hasLinkedIn: client.hasLinkedIn }
 }
 
 /**
