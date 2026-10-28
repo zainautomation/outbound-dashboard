@@ -1330,7 +1330,7 @@ function ClientCard({ client, onOpen }: { client: ClientRollup; onOpen: () => vo
         <div
           className="text-[12px] leading-snug rounded-xl px-3 py-2.5"
           style={{ color: 'var(--red-ink)', background: 'var(--red-wash)' }}>
-          Email sync failed — {client.error}
+          Email sync failed: {client.error}
         </div>
       ) : (
         <>
@@ -1507,7 +1507,7 @@ function OverviewView({ data, badges, onView }: { data: DashboardData; badges: R
         )}
       </div>
 
-      {data.linkedinError && <InlineError>LinkedIn (HeyReach) failed to sync — {data.linkedinError}</InlineError>}
+      {data.linkedinError && <InlineError>LinkedIn (HeyReach) failed to sync: {data.linkedinError}</InlineError>}
 
       <Panel
         title={active.length > 0 ? 'Active campaigns' : 'Campaigns'}
@@ -1606,7 +1606,7 @@ function LinkedInView({ data, badges }: { data: DashboardData; badges: React.Rea
     return (
       <div className="animate-fade-in">
         <PageHeader eyebrow="LinkedIn" title={data.clientName} subtitle="LinkedIn outreach via HeyReach." badges={badges} />
-        <InlineError>{data.linkedinError ? `HeyReach failed to sync — ${data.linkedinError}` : 'HeyReach is not connected for this client.'}</InlineError>
+        <InlineError>{data.linkedinError ? `HeyReach failed to sync: ${data.linkedinError}` : 'HeyReach is not connected for this client.'}</InlineError>
       </div>
     )
   }
@@ -1636,7 +1636,7 @@ function LinkedInView({ data, badges }: { data: DashboardData; badges: React.Rea
       <PageHeader
         eyebrow="LinkedIn"
         title={data.clientName}
-        subtitle={`LinkedIn outreach via HeyReach — ${li.senders.map(s => s.name).join(', ') || 'no senders'}.`}
+        subtitle={`LinkedIn outreach via HeyReach by ${li.senders.map(s => s.name).join(', ') || 'no senders'}.`}
         badges={badges}
       />
 

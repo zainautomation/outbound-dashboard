@@ -23,7 +23,7 @@ const dmMono = DM_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Zutomate — Outbound Dashboard',
+  title: 'Zutomate Control Panel',
   description: 'Live outbound performance across every Zutomate client',
 }
 
