@@ -63,6 +63,14 @@ returns lifetime `overallStats` + `byDayStats`, filterable by `campaignIds`
 (one call per campaign). A HeyReach failure is reported as `linkedinError` and
 never breaks the email data. `redact()` also strips the raw and decoded key.
 
+**Rate limits and caching.** HeyReach answers short bursts with 429 (inside a
+200 response, as a tool error). Three layers keep syncs clean — do not remove
+them: `withRetry()` in `mcp.ts` retries transient errors (429, timeouts,
+network, 5xx) with jittered backoff; `src/lib/cache.ts` `cached()` gives
+single-flight + TTL + stale-on-error (email 20s TTL / 30min stale, HeyReach
+5min TTL / 6h stale); and the browser keeps its last LinkedIn data if one
+refresh returns `linkedinError`. HeyReach per-campaign stats run 2 at a time.
+
 The Smartlead MCP URL may carry its key as `?smartlead_user_api_key=KEY` or as a
 bare `?KEY`. `extractApiKey()` handles both; the bare form is *not* forwarded by
 the server to tool calls, which is why the key is injected per call.
@@ -112,6 +120,7 @@ a stray leading space in a NAME reaches the UI otherwise.
 - `src/lib/providers/mcp.ts` — both MCP transports, `parseToolJson()`, `num()`
 - `src/lib/providers/{instantly,smartlead}.ts` — per-platform email adapters
 - `src/lib/providers/heyreach.ts` — LinkedIn (HeyReach) adapter
+- `src/lib/cache.ts` — single-flight TTL cache with stale-on-error for provider fetches
 - `src/lib/authorize.ts` — credential checks and `redact()`
 - `src/lib/clients.ts` — env-var client registry
 - `src/lib/types.ts` — types shared between API routes and UI

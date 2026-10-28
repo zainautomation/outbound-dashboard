@@ -53,6 +53,9 @@ function unwrap(result: any, tool: string): string {
 /** Instantly intermittently answers initialize without a session id; retrying fixes it. */
 const INIT_ATTEMPTS = 4
 
+/** A hung tool call fails (and is retried) instead of eating the route's time budget. */
+const HTTP_TIMEOUT_MS = 20_000
+
 /**
  * Streamable HTTP. `stateful` servers (Instantly) must hand back an
  * `mcp-session-id`; stateless ones (HeyReach) never do, and accept bare calls.
@@ -87,6 +90,7 @@ async function openHttpSession(url: string, stateful: boolean): Promise<McpSessi
       const toolRes = await fetch(url, {
         method: 'POST',
         headers,
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
         body: JSON.stringify({
           jsonrpc: '2.0',
           id,
@@ -192,9 +196,37 @@ async function openSseSession(url: string): Promise<McpSession> {
   }
 }
 
-export function openMcpSession(url: string, transport: Transport): Promise<McpSession> {
-  if (transport === 'sse') return openSseSession(url)
-  return openHttpSession(url, transport === 'http')
+/**
+ * Rate limits and blips that are worth another try. HeyReach reports its 429s
+ * inside a 200 response as a tool error ("…status code 429 (TooManyRequests)").
+ */
+const TRANSIENT = /429|too ?many ?requests|rate.?limit|timed? ?out|timeout|ECONNRESET|ETIMEDOUT|fetch failed|socket hang up|50[234]|No data from tool|Empty content/i
+
+const RETRY_DELAYS_MS = [700, 1600, 3500]
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+/** Retries transient failures with backoff plus jitter, so parallel retries don't re-collide. */
+function withRetry(session: McpSession): McpSession {
+  return {
+    async call(tool, args) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await session.call(tool, args)
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          if (attempt >= RETRY_DELAYS_MS.length || !TRANSIENT.test(message)) throw err
+          await sleep(RETRY_DELAYS_MS[attempt] + Math.random() * 400)
+        }
+      }
+    },
+    close: () => session.close(),
+  }
+}
+
+export async function openMcpSession(url: string, transport: Transport): Promise<McpSession> {
+  const session = transport === 'sse' ? await openSseSession(url) : await openHttpSession(url, transport === 'http')
+  return withRetry(session)
 }
 
 /**

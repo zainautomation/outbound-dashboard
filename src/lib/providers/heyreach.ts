@@ -1,3 +1,4 @@
+import { cached } from '../cache'
 import { num, openMcpSession, parseToolJson } from './mcp'
 import type {
   CampaignStatus,
@@ -83,9 +84,20 @@ function toStats(s: HeyReachDayStats = {}): LinkedInStats {
 
 const PAGE_SIZE = 100
 const MAX_PAGES = 10
-const BATCH_SIZE = 5
+/** HeyReach rate-limits bursts (429), so per-campaign stats go two at a time. */
+const BATCH_SIZE = 2
 
-export async function fetchHeyReach(mcpUrl: string): Promise<LinkedInData> {
+/**
+ * LinkedIn numbers move slowly, so a sync reuses data up to 5 minutes old and
+ * falls back to the last good copy (up to 6h) if HeyReach is rate-limiting.
+ */
+const CACHE = { ttlMs: 5 * 60_000, staleMs: 6 * 60 * 60_000 }
+
+export function fetchHeyReach(mcpUrl: string): Promise<LinkedInData> {
+  return cached(`heyreach:${mcpUrl}`, CACHE, () => fetchHeyReachLive(mcpUrl))
+}
+
+async function fetchHeyReachLive(mcpUrl: string): Promise<LinkedInData> {
   const session = await openMcpSession(mcpUrl, 'http-stateless')
 
   try {
@@ -114,9 +126,9 @@ export async function fetchHeyReach(mcpUrl: string): Promise<LinkedInData> {
     for (let i = 0; i < campaignList.length; i += BATCH_SIZE) {
       const batch = await Promise.all(
         campaignList.slice(i, i + BATCH_SIZE).map(async c => {
-          const stats = await call<HeyReachStats>('get_overall_stats', { campaignIds: [c.id] }).catch(
-            () => ({}) as HeyReachStats,
-          )
+          // No catch: a failure after retries should fall back to the cached
+          // copy, not show this campaign with made-up zeros.
+          const stats = await call<HeyReachStats>('get_overall_stats', { campaignIds: [c.id] })
           return {
             id: String(c.id),
             name: c.name,

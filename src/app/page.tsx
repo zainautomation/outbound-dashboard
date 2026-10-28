@@ -102,7 +102,15 @@ export default function Home() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Sync failed')
       if (wantsOverview) setOverview(json)
-      else setData(json)
+      else
+        setData(prev => {
+          // A LinkedIn hiccup on one refresh shouldn't wipe LinkedIn data already on screen.
+          const next = json as DashboardData
+          if (next.linkedinError && prev?.clientId === next.clientId && prev.linkedin) {
+            return { ...next, linkedin: prev.linkedin, linkedinError: undefined }
+          }
+          return next
+        })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
     }
@@ -1454,10 +1462,13 @@ function withStatus(data: DashboardData): EmailRow[] {
 }
 
 function Workspace({ data, view, onView }: { data: DashboardData; view: View; onView: (v: View) => void }) {
+  // Each page names only the platform its numbers come from.
+  const showEmail = view !== 'linkedin'
+  const showLinkedIn = view === 'linkedin' || (view === 'overview' && Boolean(data.linkedin || data.linkedinError))
   const badges = (
     <div className="flex gap-1.5">
-      <SourceBadge>{PROVIDER_LABEL[data.provider]}</SourceBadge>
-      {(data.linkedin || data.linkedinError) && <SourceBadge>HeyReach</SourceBadge>}
+      {showEmail && <SourceBadge>{PROVIDER_LABEL[data.provider]}</SourceBadge>}
+      {showLinkedIn && <SourceBadge>HeyReach</SourceBadge>}
     </div>
   )
 
