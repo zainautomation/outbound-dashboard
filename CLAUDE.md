@@ -39,7 +39,7 @@ the word "MCP". Before changing an adapter, know these differences:
 
 | | Instantly | Smartlead |
 |---|---|---|
-| Transport | Streamable HTTP (`POST` + `mcp-session-id`) | SSE — `GET /sse` opens a stream, server replies with a POST endpoint, responses come back on the stream matched by JSON-RPC id |
+| Transport | Streamable HTTP, stateless since server v2.0.0 (no `mcp-session-id`) | SSE — `GET /sse` opens a stream, server replies with a POST endpoint, responses come back on the stream matched by JSON-RPC id |
 | Auth | key in URL path | key must be passed as a `smartlead_user_api_key` **argument** on every call |
 | Analytics | one call returns every campaign | one call **per campaign** |
 | Active | `status === 1` | `status === "ACTIVE"` |
@@ -51,14 +51,14 @@ the word "MCP". Before changing an adapter, know these differences:
 | Status | 0 draft, 1 active, 2 paused, 3 completed, 4 subsequences, negatives = holds | `ACTIVE` / `PAUSED` / `COMPLETED` / `DRAFTED` / `STOPPED` |
 | Daily series | `get_daily_campaign_analytics` | none |
 
-Instantly sometimes answers `initialize` without an `mcp-session-id`;
-`openHttpSession` retries. Campaigns are shown **in the platform's own order**
+`openHttpSession` never requires an `mcp-session-id`: Instantly dropped
+sessions in its v2.0.0 server (Nov 2026), and requiring one broke every
+Instantly sync. It echoes one back only if a server sends it. Campaigns are shown **in the platform's own order**
 (the order the list endpoint returns) — `orderLikeCampaigns()` aligns analytics
 to it. Never re-sort campaigns by volume or date.
 
 **LinkedIn — HeyReach** (`heyreach.ts`, optional per client via
-`CLIENT_{ID}_LINKEDIN_MCP_URL`): stateless Streamable HTTP (no session id,
-transport `'http-stateless'`), key in the `xMcpKey` query. `get_overall_stats`
+`CLIENT_{ID}_LINKEDIN_MCP_URL`): stateless Streamable HTTP (transport `'http'`), key in the `xMcpKey` query. `get_overall_stats`
 returns lifetime `overallStats` + `byDayStats`, filterable by `campaignIds`
 (one call per campaign). A HeyReach failure is reported as `linkedinError` and
 never breaks the email data. `redact()` also strips the raw and decoded key.

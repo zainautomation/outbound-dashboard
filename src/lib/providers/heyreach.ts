@@ -98,7 +98,7 @@ export function fetchHeyReach(mcpUrl: string): Promise<LinkedInData> {
 }
 
 async function fetchHeyReachLive(mcpUrl: string): Promise<LinkedInData> {
-  const session = await openMcpSession(mcpUrl, 'http-stateless')
+  const session = await openMcpSession(mcpUrl, 'http')
 
   try {
     const call = async <T>(tool: string, args: Record<string, unknown> = {}) =>
