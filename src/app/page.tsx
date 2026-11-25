@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import {
   WARMUP_THRESHOLD,
   acceptanceRate,
@@ -62,6 +62,7 @@ export default function Home() {
   const [error, setError] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [repliesOpen, setRepliesOpen] = useState(false)
+  const [repliesClient, setRepliesClient] = useState('')
   const intervalRef = useRef<ReturnType<typeof setInterval>>()
 
   const [authUser, setAuthUser] = useState('')
@@ -209,10 +210,24 @@ export default function Home() {
     onView: setView,
     hasLinkedIn,
     onLogout: logout,
-    onOpenReplies: current ? () => setRepliesOpen(true) : undefined,
+    onOpenReplies: () => openReplies(),
   }
 
+  /** Opens the replies panel on the current workspace; from All clients, on the busiest healthy one. */
+  function openReplies() {
+    const busiest = overview?.clients
+      .filter(c => !c.error)
+      .sort(
+        (a, b) =>
+          b.totalPositiveReplies + (b.linkedin?.interested ?? 0) - (a.totalPositiveReplies + (a.linkedin?.interested ?? 0)),
+      )[0]?.clientId
+    setRepliesClient(current?.id ?? busiest ?? clients[0]?.id ?? '')
+    setRepliesOpen(true)
+  }
+  const repliesTarget = clients.find(c => c.id === repliesClient) ?? current ?? clients[0]
+
   return (
+    <RepliesAction.Provider value={openReplies}>
     <div className="min-h-screen flex" style={{ background: 'var(--pearl)' }}>
       <TopProgress active={syncing} />
       <Sidebar {...navProps} />
@@ -229,7 +244,7 @@ export default function Home() {
             </div>
           ) : !isOverview && data ? (
             <div key={`${selectedClient}:${activeView}`} className="animate-fade-in">
-              <Workspace data={data} view={activeView} onView={setView} onOpenReplies={() => setRepliesOpen(true)} />
+              <Workspace data={data} view={activeView} onView={setView} onOpenReplies={openReplies} />
             </div>
           ) : (
             <SkeletonPage />
@@ -237,18 +252,23 @@ export default function Home() {
         </main>
       </div>
 
-      {current && (
+      {repliesTarget && (
         <RepliesDrawer
-          key={current.id}
           open={repliesOpen}
           onClose={() => setRepliesOpen(false)}
-          clientId={current.id}
-          clientName={current.name}
+          client={repliesTarget}
+          // From All clients the panel can switch between workspaces.
+          clients={isOverview ? clients : undefined}
+          onClientChange={setRepliesClient}
         />
       )}
     </div>
+    </RepliesAction.Provider>
   )
 }
+
+/** Lets any page header open the positive-replies panel without prop drilling. */
+const RepliesAction = createContext<(() => void) | null>(null)
 
 /** Thin orange bar along the top while a refresh is in flight. */
 function TopProgress({ active }: { active: boolean }) {
@@ -429,6 +449,14 @@ function Sidebar({ session, clients, selectedClient, onSelectClient, view, onVie
             <NavItem active onClick={() => onSelectClient(ALL_CLIENTS)} icon="clients">
               All clients overview
             </NavItem>
+            {onOpenReplies && (
+              <>
+                <NavLabel>Conversations</NavLabel>
+                <NavItem active={false} onClick={onOpenReplies} icon="replies">
+                  Positive replies
+                </NavItem>
+              </>
+            )}
           </>
         )}
       </nav>
@@ -607,9 +635,9 @@ function MobileNav({ session, clients, selectedClient, onSelectClient, view, onV
           Sign out
         </button>
       </div>
-      {current && (
+      {(current || onOpenReplies) && (
         <div className="flex gap-1 px-3 overflow-x-auto pb-2">
-          {workspaceViews(hasLinkedIn).map(v => (
+          {(current ? workspaceViews(hasLinkedIn) : []).map(v => (
             <button
               key={v.id}
               onClick={() => onView(v.id)}
@@ -900,6 +928,7 @@ function PageHeader({
   subtitle: string
   badges?: React.ReactNode
 }) {
+  const openReplies = useContext(RepliesAction)
   return (
     <div className="mb-7">
       <div className="text-[11px] uppercase font-medium mb-2" style={{ color: 'var(--orange-ink)', letterSpacing: '1.6px' }}>
@@ -912,6 +941,14 @@ function PageHeader({
           {title}
         </h1>
         {badges}
+        {openReplies && (
+          <button
+            onClick={openReplies}
+            className="btn-orange press ml-auto inline-flex items-center gap-2 pl-3.5 pr-4 py-2.5 rounded-full text-[13.5px] font-medium shadow-[0_6px_18px_rgba(242,101,34,0.28)]">
+            <Icon name="replies" size={16} />
+            Positive replies
+          </button>
+        )}
       </div>
       <p className="mt-1.5 text-[14.5px] font-light" style={{ color: 'var(--ink-soft)' }}>
         {subtitle}
@@ -2290,15 +2327,22 @@ type ChannelFilter = 'all' | 'email' | 'linkedin'
 function RepliesDrawer({
   open,
   onClose,
-  clientId,
-  clientName,
+  client,
+  clients,
+  onClientChange,
 }: {
   open: boolean
   onClose: () => void
-  clientId: string
-  clientName: string
+  client: ClientSummary
+  /** When set (admin on All clients), a switcher moves the panel between workspaces. */
+  clients?: ClientSummary[]
+  onClientChange: (id: string) => void
 }) {
-  const [data, setData] = useState<RepliesData | null>(null)
+  const clientId = client.id
+  const clientName = client.name
+  /** Loaded threads per workspace, so switching back is instant. */
+  const [byClient, setByClient] = useState<Record<string, RepliesData>>({})
+  const data = byClient[clientId] ?? null
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
@@ -2316,12 +2360,19 @@ function RepliesDrawer({
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Could not load replies')
-      setData(json)
+      setByClient(prev => ({ ...prev, [clientId]: json }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load replies')
     } finally {
       setLoading(false)
     }
+  }, [clientId])
+
+  // A different workspace starts from its own list, unfiltered.
+  useEffect(() => {
+    setSelected(null)
+    setQuery('')
+    setChannel('all')
   }, [clientId])
 
   // Fetch on open; the server caches for a few minutes, so reopening is cheap.
@@ -2401,8 +2452,26 @@ function RepliesDrawer({
             </div>
           </div>
 
+          {!thread && clients && clients.length > 1 && (
+            <div className="flex gap-1.5 mt-4 overflow-x-auto pb-0.5">
+              {clients.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => onClientChange(c.id)}
+                  className="press whitespace-nowrap text-[12.5px] font-medium px-3 py-1.5 rounded-full border"
+                  style={
+                    c.id === clientId
+                      ? { background: 'var(--navy)', borderColor: 'var(--navy)', color: '#fff' }
+                      : { borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }
+                  }>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {!thread && (
-            <div className="flex flex-wrap items-center gap-2 mt-4">
+            <div className="flex flex-wrap items-center gap-2 mt-3">
               <div className="relative flex-1 min-w-[180px]">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-muted)' }} aria-hidden>
                   <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
