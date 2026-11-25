@@ -16,9 +16,7 @@ export const maxDuration = 60
  */
 export async function POST(req: NextRequest) {
   try {
-    const { role, username, password } = await req.json()
-
-    const clients = authorizeAdmin({ role, username, password })
+    const clients = authorizeAdmin(req)
     if (!clients) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

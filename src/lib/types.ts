@@ -179,5 +179,36 @@ export type AuthResponse =
   | { role: 'admin'; username: string; clients: ClientSummary[] }
   | { role: 'user'; username: string; clientId: string; client: ClientSummary }
 
-/** Auth response plus the password, which every data route re-validates. */
-export type Session = AuthResponse & { password: string }
+/** The signed-in session as the browser sees it. Credentials live only in an httpOnly cookie. */
+export type Session = AuthResponse
+
+/* ── Positive replies ────────────────────────────────────────────────────── */
+
+export interface ThreadMessage {
+  from: 'lead' | 'us'
+  at: string
+  /** Plain text, quoted history stripped. */
+  body: string
+}
+
+/** One positive lead and their conversation, from email or LinkedIn. */
+export interface PositiveThread {
+  id: string
+  channel: 'email' | 'linkedin'
+  leadName: string
+  leadEmail?: string
+  company?: string
+  title?: string
+  campaign?: string
+  /** Platform label, e.g. "Interested", "Meeting booked". */
+  label: string
+  lastAt: string
+  messages: ThreadMessage[]
+}
+
+/** Response shape of POST /api/replies. */
+export interface RepliesData {
+  threads: PositiveThread[]
+  /** Per-source failures; other sources still return their threads. */
+  errors: string[]
+}

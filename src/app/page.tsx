@@ -22,7 +22,9 @@ import type {
   LinkedInData,
   LinkedInDailyPoint,
   OverviewData,
+  PositiveThread,
   ProviderId,
+  RepliesData,
   Session,
 } from '@/lib/types'
 
@@ -32,15 +34,34 @@ const TREND_DAYS = 30
 /** Sentinel for the admin's cross-client view. */
 const ALL_CLIENTS = ''
 
-type View = 'overview' | 'email' | 'linkedin' | 'inboxes'
+type View = 'overview' | 'activity' | 'email' | 'linkedin' | 'inboxes'
+const VIEWS: View[] = ['overview', 'activity', 'email', 'linkedin', 'inboxes']
+
+/** The current screen lives in the URL hash (#/clientId/view) so a refresh lands on the same page. */
+function readRoute(): { client: string; view: View } {
+  const [, client = '', view = 'overview'] = (typeof window === 'undefined' ? '' : window.location.hash).split('/')
+  return {
+    client: client === 'all' ? ALL_CLIENTS : decodeURIComponent(client),
+    view: (VIEWS as string[]).includes(view) ? (view as View) : 'overview',
+  }
+}
+
+function writeRoute(client: string, view: View) {
+  const hash = `#/${client === ALL_CLIENTS ? 'all' : encodeURIComponent(client)}/${view}`
+  if (window.location.hash !== hash) window.history.replaceState(null, '', hash)
+}
 
 export default function Home() {
-  const [session, setSession] = useState<Session | null>(null)
+  // 'checking' until the session cookie has been looked up, so a refresh never flashes the login page.
+  const [session, setSession] = useState<Session | null | 'checking'>('checking')
   const [selectedClient, setSelectedClient] = useState(ALL_CLIENTS)
   const [view, setView] = useState<View>('overview')
-  const [data, setData] = useState<DashboardData | null>(null)
+  /** Every workspace fetched this session — switching back is instant while a refresh runs. */
+  const [workspaces, setWorkspaces] = useState<Record<string, DashboardData>>({})
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [error, setError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [repliesOpen, setRepliesOpen] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval>>()
 
   const [authUser, setAuthUser] = useState('')
@@ -48,7 +69,31 @@ export default function Home() {
   const [authError, setAuthError] = useState('')
   const [signingIn, setSigningIn] = useState(false)
 
-  const isOverview = session?.role === 'admin' && selectedClient === ALL_CLIENTS
+  const signedIn = session !== null && session !== 'checking' ? session : null
+  const isOverview = signedIn?.role === 'admin' && selectedClient === ALL_CLIENTS
+  const data = workspaces[selectedClient] ?? null
+
+  /** Lands a session on the route in the URL, or its natural home page. */
+  const enter = useCallback((auth: Session) => {
+    const route = readRoute()
+    const allowed = auth.role === 'admin' ? [ALL_CLIENTS, ...auth.clients.map(c => c.id)] : [auth.clientId]
+    const client = allowed.includes(route.client) ? route.client : auth.role === 'user' ? auth.clientId : ALL_CLIENTS
+    setSession(auth)
+    setSelectedClient(client)
+    setView(client === ALL_CLIENTS ? 'overview' : route.view)
+  }, [])
+
+  // Restore the session from its cookie on page load.
+  useEffect(() => {
+    fetch('/api/auth')
+      .then(res => (res.ok ? res.json() : null))
+      .then(auth => (auth ? enter(auth) : setSession(null)))
+      .catch(() => setSession(null))
+  }, [enter])
+
+  useEffect(() => {
+    if (signedIn) writeRoute(selectedClient, view)
+  }, [signedIn, selectedClient, view])
 
   async function handleLogin() {
     if (signingIn) return
@@ -64,10 +109,8 @@ export default function Home() {
         setAuthError('Invalid credentials. Please try again.')
         return
       }
-      const auth = await res.json()
-      setSession({ ...auth, password: authPass })
-      setSelectedClient(auth.role === 'user' ? auth.clientId : ALL_CLIENTS)
-      setView('overview')
+      setAuthPass('')
+      enter(await res.json())
     } finally {
       setSigningIn(false)
     }
@@ -75,63 +118,70 @@ export default function Home() {
 
   function logout() {
     clearInterval(intervalRef.current)
+    fetch('/api/auth', { method: 'DELETE' }).catch(() => {})
+    window.history.replaceState(null, '', window.location.pathname)
     setSession(null)
-    setData(null)
+    setWorkspaces({})
     setOverview(null)
     setSelectedClient(ALL_CLIENTS)
     setView('overview')
+    setRepliesOpen(false)
   }
 
   function selectClient(id: string) {
     setSelectedClient(id)
-    setView('overview')
-    setData(null)
+    setView(v => (id === ALL_CLIENTS ? 'overview' : v))
     setError('')
+    setRepliesOpen(false)
   }
 
   const sync = useCallback(async (clientId: string, sess: Session) => {
     const wantsOverview = sess.role === 'admin' && clientId === ALL_CLIENTS
-    setError('')
+    setSyncing(true)
     try {
-      const body = { role: sess.role, username: sess.username, password: sess.password }
       const res = await fetch(wantsOverview ? '/api/overview' : '/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(wantsOverview ? body : { ...body, clientId }),
+        body: JSON.stringify(wantsOverview ? {} : { clientId }),
       })
+      if (res.status === 401) {
+        // Session expired or credentials changed — back to sign-in.
+        setSession(null)
+        return
+      }
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'Sync failed')
+      setError('')
       if (wantsOverview) setOverview(json)
       else
-        setData(prev => {
+        setWorkspaces(prev => {
           // A LinkedIn hiccup on one refresh shouldn't wipe LinkedIn data already on screen.
           const next = json as DashboardData
-          if (next.linkedinError && prev?.clientId === next.clientId && prev.linkedin) {
-            return { ...next, linkedin: prev.linkedin, linkedinError: undefined }
-          }
-          return next
+          const old = prev[clientId]
+          const merged =
+            next.linkedinError && old?.linkedin ? { ...next, linkedin: old.linkedin, linkedinError: undefined } : next
+          return { ...prev, [clientId]: merged }
         })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
+    } finally {
+      setSyncing(false)
     }
   }, [])
 
   useEffect(() => {
-    if (!session) return
-    // A client user has no workspace until their id resolves.
-    if (session.role === 'user' && !selectedClient) return
+    if (!signedIn) return
+    if (signedIn.role === 'user' && !selectedClient) return
 
-    sync(selectedClient, session)
-
+    sync(selectedClient, signedIn)
     // Auto-refresh quietly in the background.
-    intervalRef.current = setInterval(() => {
-      sync(selectedClient, session)
-    }, SYNC_SECONDS * 1000)
-
+    intervalRef.current = setInterval(() => sync(selectedClient, signedIn), SYNC_SECONDS * 1000)
     return () => clearInterval(intervalRef.current)
-  }, [selectedClient, session, sync])
+  }, [selectedClient, signedIn, sync])
 
-  if (!session) {
+  if (session === 'checking') return <BootScreen />
+
+  if (!signedIn) {
     return (
       <LoginScreen
         user={authUser}
@@ -145,48 +195,77 @@ export default function Home() {
     )
   }
 
-  const clients: ClientSummary[] = session.role === 'admin' ? session.clients : [session.client]
+  const clients: ClientSummary[] = signedIn.role === 'admin' ? signedIn.clients : [signedIn.client]
   const current = clients.find(c => c.id === selectedClient)
   const hasLinkedIn = Boolean(current?.hasLinkedIn)
   const activeView: View = view === 'linkedin' && !hasLinkedIn ? 'overview' : view
   const loaded = isOverview ? overview : data
+  const navProps: NavProps = {
+    session: signedIn,
+    clients,
+    selectedClient,
+    onSelectClient: selectClient,
+    view: activeView,
+    onView: setView,
+    hasLinkedIn,
+    onLogout: logout,
+    onOpenReplies: current ? () => setRepliesOpen(true) : undefined,
+  }
 
   return (
     <div className="min-h-screen flex" style={{ background: 'var(--pearl)' }}>
-      <Sidebar
-        session={session}
-        clients={clients}
-        selectedClient={selectedClient}
-        onSelectClient={selectClient}
-        view={activeView}
-        onView={setView}
-        hasLinkedIn={hasLinkedIn}
-        onLogout={logout}
-      />
+      <TopProgress active={syncing} />
+      <Sidebar {...navProps} />
 
       <div className="flex-1 min-w-0 flex flex-col">
-        <MobileNav
-          session={session}
-          clients={clients}
-          selectedClient={selectedClient}
-          onSelectClient={selectClient}
-          view={activeView}
-          onView={setView}
-          hasLinkedIn={hasLinkedIn}
-          onLogout={logout}
-        />
+        <MobileNav {...navProps} />
 
         <main className="flex-1 w-full max-w-[1320px] mx-auto px-4 sm:px-8 py-7 sm:py-9">
           {error && !loaded ? (
-            <ErrorState message={error} onRetry={() => sync(selectedClient, session)} />
+            <ErrorState message={error} onRetry={() => sync(selectedClient, signedIn)} />
           ) : isOverview && overview ? (
-            <AdminOverview overview={overview} onOpenClient={selectClient} />
+            <div key="overview" className="animate-fade-in">
+              <AdminOverview overview={overview} onOpenClient={selectClient} />
+            </div>
           ) : !isOverview && data ? (
-            <Workspace data={data} view={activeView} onView={setView} />
+            <div key={`${selectedClient}:${activeView}`} className="animate-fade-in">
+              <Workspace data={data} view={activeView} onView={setView} onOpenReplies={() => setRepliesOpen(true)} />
+            </div>
           ) : (
-            <LoadingState />
+            <SkeletonPage />
           )}
         </main>
+      </div>
+
+      {current && (
+        <RepliesDrawer
+          key={current.id}
+          open={repliesOpen}
+          onClose={() => setRepliesOpen(false)}
+          clientId={current.id}
+          clientName={current.name}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Thin orange bar along the top while a refresh is in flight. */
+function TopProgress({ active }: { active: boolean }) {
+  return (
+    <div
+      className="fixed top-0 left-0 right-0 h-[2px] z-[60] pointer-events-none overflow-hidden transition-opacity duration-300"
+      style={{ opacity: active ? 1 : 0 }}>
+      <div className="h-full progress-indeterminate" style={{ background: 'var(--orange)' }} />
+    </div>
+  )
+}
+
+function BootScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--navy)' }}>
+      <div className="animate-pulse-soft">
+        <Logo height={28} tone="light" />
       </div>
     </div>
   )
@@ -226,8 +305,10 @@ function ArrowUpRight({ size = 14, color = 'currentColor' }: { size?: number; co
 }
 
 /** Small line icons for the sidebar. */
-const ICONS: Record<View | 'clients' | 'logout', string> = {
+const ICONS: Record<View | 'clients' | 'logout' | 'replies', string> = {
   overview: 'M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
+  replies: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z',
   email: 'M4 6h16v12H4V6Zm0 0 8 6 8-6',
   linkedin: 'M7 10v7M7 7v.01M11 17v-4a2 2 0 0 1 4 0v4M11 10v7M4 4h16v16H4V4Z',
   inboxes: 'M4 13h4l2 3h4l2-3h4M4 13l2-8h12l2 8v6H4v-6Z',
@@ -285,18 +366,21 @@ interface NavProps {
   onView: (v: View) => void
   hasLinkedIn: boolean
   onLogout: () => void
+  /** Opens the positive-replies panel; undefined on the all-clients view. */
+  onOpenReplies?: () => void
 }
 
 function workspaceViews(hasLinkedIn: boolean): { id: View; label: string }[] {
   return [
     { id: 'overview', label: 'Overview' },
+    { id: 'activity', label: 'Daily activity' },
     { id: 'email', label: 'Email campaigns' },
     ...(hasLinkedIn ? [{ id: 'linkedin' as View, label: 'LinkedIn' }] : []),
     { id: 'inboxes', label: 'Sending inboxes' },
   ]
 }
 
-function Sidebar({ session, clients, selectedClient, onSelectClient, view, onView, hasLinkedIn, onLogout }: NavProps) {
+function Sidebar({ session, clients, selectedClient, onSelectClient, view, onView, hasLinkedIn, onLogout, onOpenReplies }: NavProps) {
   const admin = session.role === 'admin'
   const current = clients.find(c => c.id === selectedClient)
 
@@ -330,6 +414,14 @@ function Sidebar({ session, clients, selectedClient, onSelectClient, view, onVie
                 {v.label}
               </NavItem>
             ))}
+            {onOpenReplies && (
+              <>
+                <NavLabel>Conversations</NavLabel>
+                <NavItem active={false} onClick={onOpenReplies} icon="replies">
+                  Positive replies
+                </NavItem>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -428,7 +520,7 @@ function ClientSwitcher({
                   role="option"
                   aria-selected={selected}
                   onClick={() => pick(o.id)}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[13.5px] text-left transition-colors hover:bg-white/[0.07]"
+                  className="press w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[13.5px] text-left hover:bg-white/[0.07]"
                   style={{ color: selected ? '#fff' : 'var(--on-navy-soft)', background: selected ? 'rgba(255,255,255,0.08)' : undefined }}>
                   <span className="truncate">{o.name}</span>
                   {selected && (
@@ -470,7 +562,7 @@ function NavItem({
   return (
     <button
       onClick={onClick}
-      className="relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13.5px] transition-colors hover:bg-white/5 text-left"
+      className="press relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13.5px] hover:bg-white/5 text-left"
       style={{
         color: active ? '#fff' : 'var(--on-navy-soft)',
         background: active ? 'rgba(255,255,255,0.08)' : undefined,
@@ -484,7 +576,7 @@ function NavItem({
   )
 }
 
-function MobileNav({ session, clients, selectedClient, onSelectClient, view, onView, hasLinkedIn, onLogout }: NavProps) {
+function MobileNav({ session, clients, selectedClient, onSelectClient, view, onView, hasLinkedIn, onLogout, onOpenReplies }: NavProps) {
   const admin = session.role === 'admin'
   const current = clients.find(c => c.id === selectedClient)
 
@@ -530,6 +622,14 @@ function MobileNav({ session, clients, selectedClient, onSelectClient, view, onV
               {v.label}
             </button>
           ))}
+          {onOpenReplies && (
+            <button
+              onClick={onOpenReplies}
+              className="whitespace-nowrap text-[12.5px] px-3 py-1.5 rounded-full border press"
+              style={{ borderColor: 'var(--orange)', color: '#fff' }}>
+              Positive replies
+            </button>
+          )}
         </div>
       )}
     </header>
@@ -661,7 +761,7 @@ function LoginScreen({ user, setUser, pass, setPass, error, busy, onLogin }: Log
             <button
               type="submit"
               disabled={busy}
-              className="btn-orange w-full mt-2 py-3.5 rounded-full text-[15px] font-medium inline-flex items-center justify-center gap-2 disabled:opacity-70">
+              className="btn-orange press w-full mt-2 py-3.5 rounded-full text-[15px] font-medium inline-flex items-center justify-center gap-2 disabled:opacity-70">
               {busy ? 'Signing in…' : 'Sign in'}
               {!busy && <ArrowUpRight size={16} />}
             </button>
@@ -956,7 +1056,7 @@ function TextButton({ onClick, children }: { onClick: () => void; children: Reac
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border transition-colors hover:border-[var(--orange)]"
+      className="press inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border hover:border-[var(--orange)]"
       style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
       {children}
       <ArrowUpRight size={12} />
@@ -979,7 +1079,7 @@ function FilterToggle<T extends string>({
         <button
           key={o.id}
           onClick={() => onChange(o.id)}
-          className="text-[12px] font-medium px-3 py-1 rounded-full transition-colors whitespace-nowrap"
+          className="press text-[12px] font-medium px-3 py-1 rounded-full whitespace-nowrap"
           style={
             o.id === value
               ? { background: 'var(--surface)', color: 'var(--ink)', boxShadow: '0 1px 2px rgba(13,27,46,0.08)' }
@@ -1067,7 +1167,7 @@ function TableFrame({
         <div className="flex justify-center pt-4">
           <button
             onClick={() => setShowAll(s => !s)}
-            className="text-[12.5px] font-medium px-4 py-2 rounded-full border transition-colors hover:border-[var(--orange)]"
+            className="press text-[12.5px] font-medium px-4 py-2 rounded-full border hover:border-[var(--orange)]"
             style={{ borderColor: 'var(--line-strong)', color: 'var(--ink-soft)' }}>
             {showAll ? 'Show fewer' : `Show all ${rows.length} ${noun}`}
           </button>
@@ -1085,75 +1185,407 @@ function Cell({ children, color }: { children: React.ReactNode; color?: string }
   )
 }
 
-/* ── Trend chart ─────────────────────────────────────────────────────────── */
+/* ── Activity chart ──────────────────────────────────────────────────────── */
 
-/** Bars for volume (left scale) with a line for the response metric (right scale). */
-function TrendChart({
-  points,
-  barLabel,
-  lineLabel,
-}: {
-  points: { date: string; bar: number; line: number }[]
-  barLabel: string
-  lineLabel: string
-}) {
+type Range = 7 | 30 | 90
+const RANGES: { id: Range; label: string }[] = [
+  { id: 7, label: '7 days' },
+  { id: 30, label: '30 days' },
+  { id: 90, label: '90 days' },
+]
+
+interface Series {
+  key: string
+  label: string
+  color: string
+  /** Bars read on the left scale; lines share the right scale. */
+  kind: 'bar' | 'line'
+  values: number[]
+}
+
+const dayLabel = (d: string, opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }) =>
+  new Date(d + 'T00:00:00Z').toLocaleDateString('en', { ...opts, timeZone: 'UTC' })
+
+function niceMax(v: number): number {
+  if (v <= 0) return 1
+  const p = 10 ** Math.floor(Math.log10(v))
+  const n = v / p
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p
+}
+
+/** Interactive daily chart: toggleable series, hover crosshair with a value card. */
+function ActivityChart({ dates, series, height = 280 }: { dates: string[]; series: Series[]; height?: number }) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [hover, setHover] = useState<number | null>(null)
-  if (points.every(p => p.bar === 0 && p.line === 0)) return <Empty>No activity in the last {TREND_DAYS} days</Empty>
 
-  const W = 720
-  const H = 200
-  const pad = { t: 10, b: 24 }
-  const maxBar = Math.max(...points.map(p => p.bar), 1)
-  const maxLine = Math.max(...points.map(p => p.line), 1)
-  const slot = W / points.length
-  const y = (v: number, max: number) => pad.t + (H - pad.t - pad.b) * (1 - v / max)
-  const line = points.map((p, i) => `${(i * slot + slot / 2).toFixed(1)},${y(p.line, maxLine).toFixed(1)}`).join(' ')
-  const active = hover !== null ? points[hover] : null
-  const label = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const shown = series.filter(s => !hidden.has(s.key))
+  const bars = shown.filter(s => s.kind === 'bar')
+  const lines = shown.filter(s => s.kind === 'line')
+  const empty = series.every(s => s.values.every(v => v === 0))
+
+  const W = 1000
+  const H = height
+  const pad = { t: 14, b: 8, l: 0, r: 0 }
+  const plotH = H - pad.t - pad.b
+  const slot = W / Math.max(dates.length, 1)
+  const barMax = niceMax(Math.max(0, ...bars.flatMap(s => s.values)))
+  const lineMax = niceMax(Math.max(0, ...lines.flatMap(s => s.values)))
+  const y = (v: number, max: number) => pad.t + plotH * (1 - v / max)
+  const cx = (i: number) => i * slot + slot / 2
+
+  const toggle = (key: string) =>
+    setHidden(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else if (series.length - next.size > 1) next.add(key) // keep at least one visible
+      return next
+    })
+
+  const tickEvery = Math.ceil(dates.length / 7)
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-5 mb-3 text-[12px]" style={{ color: 'var(--ink-muted)' }}>
-        <span className="flex items-center gap-2">
-          <span className="w-3 h-2.5 rounded-sm" style={{ background: 'rgba(13,27,46,0.18)' }} />
-          {barLabel}
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="w-3 h-[2px] rounded-full" style={{ background: 'var(--orange)' }} />
-          {lineLabel}
-        </span>
-        <span className="ml-auto font-mono text-[11.5px]" style={{ color: 'var(--ink-soft)' }}>
-          {active
-            ? `${label(active.date)} · ${active.bar.toLocaleString()} ${barLabel.toLowerCase()} · ${active.line.toLocaleString()} ${lineLabel.toLowerCase()}`
-            : `Last ${TREND_DAYS} days`}
-        </span>
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {series.map(s => {
+          const off = hidden.has(s.key)
+          return (
+            <button
+              key={s.key}
+              onClick={() => toggle(s.key)}
+              className="press inline-flex items-center gap-2 text-[12px] font-medium pl-2.5 pr-3 py-1.5 rounded-full border transition-all"
+              style={{
+                borderColor: off ? 'var(--line)' : 'var(--line-strong)',
+                color: off ? 'var(--ink-muted)' : 'var(--ink)',
+                background: off ? 'transparent' : 'var(--surface)',
+                opacity: off ? 0.55 : 1,
+              }}>
+              <span
+                className={s.kind === 'bar' ? 'w-2.5 h-2.5 rounded-[3px]' : 'w-3 h-[3px] rounded-full'}
+                style={{ background: s.color }}
+              />
+              {s.label}
+              <span className="font-mono text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {compact(s.values.reduce((a, b) => a + b, 0))}
+              </span>
+            </button>
+          )
+        })}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[200px]" preserveAspectRatio="none" onMouseLeave={() => setHover(null)}>
-        {[0.25, 0.5, 0.75].map(f => (
-          <line key={f} x1="0" x2={W} y1={pad.t + (H - pad.t - pad.b) * f} y2={pad.t + (H - pad.t - pad.b) * f} stroke="var(--line)" strokeWidth="1" />
-        ))}
-        {points.map((p, i) => (
-          <rect
-            key={p.date}
-            x={i * slot + slot * 0.18}
-            width={slot * 0.64}
-            y={y(p.bar, maxBar)}
-            height={Math.max(H - pad.b - y(p.bar, maxBar), 0)}
-            rx="2"
-            fill={hover === i ? 'rgba(13,27,46,0.32)' : 'rgba(13,27,46,0.16)'}
+
+      {empty ? (
+        <Empty>No activity in this period yet</Empty>
+      ) : (
+        <div className="relative select-none" onMouseLeave={() => setHover(null)}>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full block" style={{ height: H }} preserveAspectRatio="none">
+            <defs>
+              {lines.map(s => (
+                <linearGradient key={s.key} id={`fill-${s.key}`} x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor={s.color} stopOpacity="0.18" />
+                  <stop offset="100%" stopColor={s.color} stopOpacity="0" />
+                </linearGradient>
+              ))}
+            </defs>
+            {[0, 0.25, 0.5, 0.75].map(f => (
+              <line key={f} x1="0" x2={W} y1={pad.t + plotH * f} y2={pad.t + plotH * f} stroke="var(--line)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            ))}
+            <line x1="0" x2={W} y1={H - pad.b} y2={H - pad.b} stroke="var(--line-strong)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+
+            {hover !== null && <rect x={hover * slot} width={slot} y={pad.t} height={plotH} fill="var(--navy-wash)" />}
+
+            {bars.map((s, bi) => {
+              const width = (slot * 0.7) / bars.length
+              return s.values.map((v, i) => {
+                const top = y(v, barMax)
+                return (
+                  <rect
+                    key={`${s.key}${i}`}
+                    className="chart-bar"
+                    x={i * slot + slot * 0.15 + bi * width}
+                    width={Math.max(width, 1)}
+                    y={top}
+                    height={Math.max(H - pad.b - top, v > 0 ? 1.5 : 0)}
+                    rx={Math.min(3, width / 3)}
+                    fill={s.color}
+                    opacity={hover === null || hover === i ? 1 : 0.55}
+                  />
+                )
+              })
+            })}
+
+            {lines.map((s, li) => {
+              const pts = s.values.map((v, i) => `${cx(i).toFixed(1)},${y(v, lineMax).toFixed(1)}`)
+              return (
+                <g key={s.key}>
+                  {li === 0 && (
+                    <polygon
+                      points={`${cx(0)},${H - pad.b} ${pts.join(' ')} ${cx(s.values.length - 1)},${H - pad.b}`}
+                      fill={`url(#fill-${s.key})`}
+                    />
+                  )}
+                  <polyline
+                    points={pts.join(' ')}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth="2.25"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </g>
+              )
+            })}
+
+            {dates.map((d, i) => (
+              <rect key={`hit${d}`} x={i * slot} width={slot} y="0" height={H} fill="transparent" onMouseEnter={() => setHover(i)} />
+            ))}
+          </svg>
+
+          {/* Line markers in HTML so they stay round under the stretched SVG. */}
+          {hover !== null &&
+            lines.map(s => (
+              <span
+                key={`dot${s.key}`}
+                className="absolute w-2.5 h-2.5 rounded-full border-2 pointer-events-none"
+                style={{
+                  left: `calc(${((hover + 0.5) / dates.length) * 100}% - 5px)`,
+                  top: y(s.values[hover], lineMax) - 5,
+                  background: 'var(--surface)',
+                  borderColor: s.color,
+                }}
+              />
+            ))}
+
+          {hover !== null && (
+            <div
+              className="absolute top-2 z-10 pointer-events-none rounded-xl border px-3.5 py-3 min-w-[170px] animate-pop"
+              style={{
+                ...CARD_STYLE,
+                boxShadow: 'var(--shadow-lift)',
+                ...(hover / dates.length > 0.6
+                  ? { right: `calc(${(1 - hover / dates.length) * 100}% + 12px)` }
+                  : { left: `calc(${((hover + 1) / dates.length) * 100}% + 12px)` }),
+              }}>
+              <div className="text-[11.5px] font-medium mb-2" style={{ color: 'var(--ink)' }}>
+                {dayLabel(dates[hover], { weekday: 'short', month: 'short', day: 'numeric' })}
+              </div>
+              {shown.map(s => (
+                <div key={s.key} className="flex items-center justify-between gap-4 text-[12px] py-0.5">
+                  <span className="flex items-center gap-2" style={{ color: 'var(--ink-soft)' }}>
+                    <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />
+                    {s.label}
+                  </span>
+                  <span className="font-mono font-medium" style={{ color: 'var(--ink)' }}>
+                    {s.values[hover].toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="relative h-5 mt-1.5 text-[11px] font-mono" style={{ color: 'var(--ink-muted)' }}>
+            {dates.map((d, i) =>
+              i % tickEvery === 0 || i === dates.length - 1 ? (
+                <span
+                  key={d}
+                  className="absolute -translate-x-1/2 whitespace-nowrap"
+                  style={{ left: `${((i + 0.5) / dates.length) * 100}%`, opacity: i === dates.length - 1 || dates.length - 1 - i >= tickEvery / 2 ? 1 : 0 }}>
+                  {dayLabel(d)}
+                </span>
+              ) : null,
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Daily activity ──────────────────────────────────────────────────────── */
+
+const emptyDay = (date: string): DailyPoint => ({ date, sent: 0, replies: 0, positive: 0 })
+const emptyLiDay = (date: string): LinkedInDailyPoint => ({ date, connectionsSent: 0, connectionsAccepted: 0, replies: 0 })
+
+/** Change vs the previous period of the same length, or undefined when there is no prior data. */
+function delta(current: number, previous: number): number | undefined {
+  if (previous <= 0) return undefined
+  return ((current - previous) / previous) * 100
+}
+
+function DeltaChip({ value, invert = false }: { value?: number; invert?: boolean }) {
+  if (value === undefined || !Number.isFinite(value)) return null
+  const good = invert ? value < 0 : value >= 0
+  return (
+    <span
+      className="inline-flex items-center text-[11px] font-mono font-medium px-1.5 py-0.5 rounded-md"
+      style={{ background: good ? 'var(--green-wash)' : 'var(--red-wash)', color: good ? 'var(--green-ink)' : 'var(--red-ink)' }}>
+      {value >= 0 ? '+' : ''}
+      {value.toFixed(0)}%
+    </span>
+  )
+}
+
+function RangeToggle({ value, onChange }: { value: Range; onChange: (r: Range) => void }) {
+  return <FilterToggle value={String(value)} onChange={v => onChange(Number(v) as Range)} options={RANGES.map(r => ({ id: String(r.id), label: r.label }))} />
+}
+
+function sumBy<T>(rows: T[], pick: (r: T) => number) {
+  return rows.reduce((s, r) => s + pick(r), 0)
+}
+
+/**
+ * The big daily view: range selector, period totals with change vs the
+ * previous period, email chart, LinkedIn chart, and a day-by-day table.
+ */
+function DailyActivity({
+  daily,
+  linkedin,
+  defaultRange = 30,
+  showTable = true,
+}: {
+  daily: DailyPoint[]
+  linkedin?: LinkedInDailyPoint[]
+  defaultRange?: Range
+  showTable?: boolean
+}) {
+  const [range, setRange] = useState<Range>(defaultRange)
+
+  const both = lastDays(daily, range * 2, emptyDay)
+  const days = both.slice(range)
+  const prev = both.slice(0, range)
+  const liBoth = linkedin ? lastDays(linkedin, range * 2, emptyLiDay) : []
+  const liDays = liBoth.slice(range)
+  const liPrev = liBoth.slice(0, range)
+
+  const sent = sumBy(days, d => d.sent)
+  const replies = sumBy(days, d => d.replies)
+  const positive = sumBy(days, d => d.positive)
+  const best = days.reduce<DailyPoint | null>((b, d) => (d.replies > (b?.replies ?? 0) ? d : b), null)
+  const activeDays = days.filter(d => d.sent > 0).length
+
+  const summary: { label: string; value: string; d?: number; color?: string; sub?: string }[] = [
+    { label: 'Emails sent', value: compact(sent), d: delta(sent, sumBy(prev, d => d.sent)), sub: `${activeDays} sending day${activeDays !== 1 ? 's' : ''}` },
+    { label: 'Replies', value: compact(replies), d: delta(replies, sumBy(prev, d => d.replies)), sub: `${pct(replyRate(sent, replies))} reply rate` },
+    { label: 'Positive', value: compact(positive), d: delta(positive, sumBy(prev, d => d.positive)), color: 'var(--green-ink)', sub: `${pct(positiveRate(replies, positive))} of replies` },
+    { label: 'Best day', value: best ? dayLabel(best.date) : '—', sub: best ? `${best.replies} replies` : 'No replies yet' },
+  ]
+  if (linkedin) {
+    const conn = sumBy(liDays, d => d.connectionsSent)
+    const liReplies = sumBy(liDays, d => d.replies)
+    summary.push(
+      { label: 'LinkedIn connects', value: compact(conn), d: delta(conn, sumBy(liPrev, d => d.connectionsSent)), sub: `${sumBy(liDays, d => d.connectionsAccepted)} accepted` },
+      { label: 'LinkedIn replies', value: compact(liReplies), d: delta(liReplies, sumBy(liPrev, d => d.replies)) },
+    )
+  }
+
+  const dates = days.map(d => d.date)
+
+  return (
+    <div className="flex flex-col gap-5">
+      <section className="rounded-2xl border" style={CARD_STYLE}>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 sm:px-6 pt-5">
+          <div>
+            <h2 className="font-display text-[17px] font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.3px' }}>
+              Daily activity
+            </h2>
+            <p className="text-[12.5px] mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+              Change shown against the previous {range} days
+            </p>
+          </div>
+          <RangeToggle value={range} onChange={setRange} />
+        </div>
+
+        <div className={`grid gap-px mt-5 border-y grid-cols-2 ${linkedin ? 'md:grid-cols-3 xl:grid-cols-6' : 'md:grid-cols-4'}`} style={{ borderColor: 'var(--line)', background: 'var(--line)' }}>
+          {summary.map(s => (
+            <div key={s.label} className="px-5 sm:px-6 py-4" style={{ background: 'var(--surface)' }}>
+              <div className="text-[10.5px] uppercase font-medium mb-1.5" style={{ color: 'var(--ink-muted)', letterSpacing: '1.1px' }}>
+                {s.label}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-display tabular text-[22px] font-semibold leading-none" style={{ color: s.color ?? 'var(--ink)' }}>
+                  {s.value}
+                </span>
+                <DeltaChip value={s.d} />
+              </div>
+              {s.sub && (
+                <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--ink-muted)' }}>
+                  {s.sub}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="px-5 sm:px-6 py-5">
+          <ActivityChart
+            key={`email${range}`}
+            dates={dates}
+            series={[
+              { key: 'sent', label: 'Emails sent', color: 'rgba(13,27,46,0.22)', kind: 'bar', values: days.map(d => d.sent) },
+              { key: 'replies', label: 'Replies', color: 'var(--orange)', kind: 'line', values: days.map(d => d.replies) },
+              { key: 'positive', label: 'Positive', color: 'var(--green-ink)', kind: 'line', values: days.map(d => d.positive) },
+            ]}
           />
-        ))}
-        <polyline points={line} fill="none" stroke="var(--orange)" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-        {points.map((p, i) => (
-          <rect key={`h${p.date}`} x={i * slot} width={slot} y="0" height={H} fill="transparent" onMouseEnter={() => setHover(i)} />
-        ))}
-        <line x1="0" x2={W} y1={H - pad.b} y2={H - pad.b} stroke="var(--line-strong)" strokeWidth="1" />
-      </svg>
-      <div className="flex justify-between text-[11px] mt-1 font-mono" style={{ color: 'var(--ink-muted)' }}>
-        <span>{label(points[0].date)}</span>
-        <span>{label(points[Math.floor(points.length / 2)].date)}</span>
-        <span>{label(points[points.length - 1].date)}</span>
-      </div>
+        </div>
+
+        {linkedin && (
+          <div className="px-5 sm:px-6 pb-6 pt-1 border-t" style={{ borderColor: 'var(--line)' }}>
+            <div className="text-[12px] font-medium mt-5 mb-3" style={{ color: 'var(--ink-soft)' }}>
+              LinkedIn (HeyReach)
+            </div>
+            <ActivityChart
+              key={`li${range}`}
+              height={200}
+              dates={dates}
+              series={[
+                { key: 'conn', label: 'Connections sent', color: 'rgba(13,27,46,0.22)', kind: 'bar', values: liDays.map(d => d.connectionsSent) },
+                { key: 'acc', label: 'Accepted', color: 'var(--navy)', kind: 'line', values: liDays.map(d => d.connectionsAccepted) },
+                { key: 'lireplies', label: 'Replies', color: 'var(--orange)', kind: 'line', values: liDays.map(d => d.replies) },
+              ]}
+            />
+          </div>
+        )}
+      </section>
+
+      {showTable && (
+        <Panel title="Day by day" subtitle="Newest first">
+          <TableFrame
+            key={range}
+            noun="days"
+            limit={14}
+            headers={['Date', 'Sent', 'Replies', 'Reply %', 'Positive', ...(linkedin ? ['LI connects', 'LI accepted', 'LI replies'] : [])]}
+            leftAligned={['Date']}
+            rows={[...days].reverse().map((d, ri) => {
+              const li = liDays[days.length - 1 - ri]
+              const isToday = ri === 0
+              return (
+                <tr key={d.date} className="row-hover border-t" style={{ borderColor: 'var(--line)' }}>
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    <span className="font-medium" style={{ color: 'var(--ink)' }}>
+                      {dayLabel(d.date, { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </span>
+                    {isToday && (
+                      <span className="ml-2 text-[10px] uppercase font-medium px-1.5 py-0.5 rounded" style={{ background: 'var(--orange-wash)', color: 'var(--orange-ink)', letterSpacing: '0.8px' }}>
+                        Today
+                      </span>
+                    )}
+                  </td>
+                  <Cell color={d.sent ? undefined : 'var(--ink-muted)'}>{d.sent.toLocaleString()}</Cell>
+                  <Cell color={d.replies ? 'var(--ink)' : 'var(--ink-muted)'}>{d.replies.toLocaleString()}</Cell>
+                  <Cell color={d.sent ? 'var(--ink)' : 'var(--ink-muted)'}>{d.sent ? pct(replyRate(d.sent, d.replies)) : '—'}</Cell>
+                  <Cell color={d.positive ? 'var(--green-ink)' : 'var(--ink-muted)'}>{d.positive.toLocaleString()}</Cell>
+                  {linkedin && (
+                    <>
+                      <Cell color={li?.connectionsSent ? undefined : 'var(--ink-muted)'}>{(li?.connectionsSent ?? 0).toLocaleString()}</Cell>
+                      <Cell color={li?.connectionsAccepted ? undefined : 'var(--ink-muted)'}>{(li?.connectionsAccepted ?? 0).toLocaleString()}</Cell>
+                      <Cell color={li?.replies ? 'var(--ink)' : 'var(--ink-muted)'}>{(li?.replies ?? 0).toLocaleString()}</Cell>
+                    </>
+                  )}
+                </tr>
+              )
+            })}
+          />
+        </Panel>
+      )}
     </div>
   )
 }
@@ -1238,21 +1670,20 @@ function emailKpis(t: EmailTotals, daily: DailyPoint[]) {
     },
   ]
 
-  const trend = series.map(d => ({ date: d.date, bar: d.sent, line: d.replies }))
-  return { primary, rates, trend }
+  return { primary, rates }
 }
 
 /* ── Admin: every client, every campaign ─────────────────────────────────── */
 
 function AdminOverview({ overview, onOpenClient }: { overview: OverviewData; onOpenClient: (id: string) => void }) {
   const [filter, setFilter] = useState<StatusFilter>('all')
-  const { primary, rates, trend } = emailKpis(overview, overview.daily)
+  const { primary, rates } = emailKpis(overview, overview.daily)
   const failed = overview.clients.filter(c => c.error)
 
   const campaigns = filter === 'all' ? overview.campaigns : overview.campaigns.filter(c => c.status === filter)
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageHeader
         eyebrow="Agency overview"
         title="All clients"
@@ -1263,9 +1694,9 @@ function AdminOverview({ overview, onOpenClient }: { overview: OverviewData; onO
       <KpiRow items={primary} cols="grid-cols-2 xl:grid-cols-4" />
       <KpiRow items={rates} cols="grid-cols-2 xl:grid-cols-4" />
 
-      <Panel title="Sending trend" subtitle="Emails sent and replies per day, all clients" className="mt-5 mb-5">
-        <TrendChart points={trend} barLabel="Sent" lineLabel="Replies" />
-      </Panel>
+      <div className="mt-5 mb-5">
+        <DailyActivity daily={overview.daily} showTable={false} />
+      </div>
 
       <Panel
         title="Clients"
@@ -1300,7 +1731,7 @@ function ClientCard({ client, onOpen }: { client: ClientRollup; onOpen: () => vo
   return (
     <button
       onClick={onOpen}
-      className="group text-left rounded-2xl border p-5 transition-all hover:-translate-y-0.5"
+      className="press group text-left rounded-2xl border p-5 transition-all hover:-translate-y-0.5"
       style={{ borderColor: 'var(--line)', background: 'var(--surface)' }}
       onMouseEnter={e => (e.currentTarget.style.boxShadow = 'var(--shadow-lift)')}
       onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}>
@@ -1461,10 +1892,21 @@ function withStatus(data: DashboardData): EmailRow[] {
   return data.analytics.map(a => ({ ...a, status: status.get(a.campaignId) ?? 'error' }))
 }
 
-function Workspace({ data, view, onView }: { data: DashboardData; view: View; onView: (v: View) => void }) {
+function Workspace({
+  data,
+  view,
+  onView,
+  onOpenReplies,
+}: {
+  data: DashboardData
+  view: View
+  onView: (v: View) => void
+  onOpenReplies: () => void
+}) {
   // Each page names only the platform its numbers come from.
   const showEmail = view !== 'linkedin'
-  const showLinkedIn = view === 'linkedin' || (view === 'overview' && Boolean(data.linkedin || data.linkedinError))
+  const showLinkedIn =
+    view === 'linkedin' || ((view === 'overview' || view === 'activity') && Boolean(data.linkedin || data.linkedinError))
   const badges = (
     <div className="flex gap-1.5">
       {showEmail && <SourceBadge>{PROVIDER_LABEL[data.provider]}</SourceBadge>}
@@ -1475,16 +1917,69 @@ function Workspace({ data, view, onView }: { data: DashboardData; view: View; on
   if (view === 'email') return <EmailView data={data} badges={badges} />
   if (view === 'linkedin') return <LinkedInView data={data} badges={badges} />
   if (view === 'inboxes') return <InboxesView data={data} badges={badges} />
-  return <OverviewView data={data} badges={badges} onView={onView} />
+  if (view === 'activity') return <ActivityView data={data} badges={badges} />
+  return <OverviewView data={data} badges={badges} onView={onView} onOpenReplies={onOpenReplies} />
 }
 
-function OverviewView({ data, badges, onView }: { data: DashboardData; badges: React.ReactNode; onView: (v: View) => void }) {
-  const { primary, rates, trend } = emailKpis(data, data.daily)
+function ActivityView({ data, badges }: { data: DashboardData; badges: React.ReactNode }) {
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Daily activity"
+        title={data.clientName}
+        subtitle={`Day-by-day sending and replies${data.linkedin ? ', email and LinkedIn' : ''}.`}
+        badges={badges}
+      />
+      <DailyActivity daily={data.daily} linkedin={data.linkedin?.daily} />
+    </div>
+  )
+}
+
+/** Positive-reply teaser on the overview: count, latest names, opens the side panel. */
+function RepliesCard({ positive, onOpen }: { positive: number; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="press group text-left rounded-2xl border p-5 flex flex-col justify-between transition-all hover:-translate-y-0.5 hover:shadow-[var(--shadow-lift)]"
+      style={{ ...CARD_STYLE, background: 'linear-gradient(150deg, var(--navy-3), var(--navy))', borderColor: 'transparent' }}>
+      <div className="flex items-center justify-between">
+        <span className="text-[10.5px] uppercase font-medium" style={{ color: 'var(--on-navy-soft)', letterSpacing: '1.2px' }}>
+          Positive replies
+        </span>
+        <span className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white/10 group-hover:bg-[var(--orange)]">
+          <Icon name="replies" size={15} />
+        </span>
+      </div>
+      <div className="mt-6">
+        <div className="font-display tabular text-[34px] font-semibold leading-none" style={{ color: 'var(--green-bright)' }}>
+          {positive.toLocaleString()}
+        </div>
+        <div className="text-[13px] mt-2 text-white">Read every positive conversation</div>
+        <div className="text-[12px] mt-0.5" style={{ color: 'var(--on-navy-muted)' }}>
+          Email and LinkedIn, newest first
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function OverviewView({
+  data,
+  badges,
+  onView,
+  onOpenReplies,
+}: {
+  data: DashboardData
+  badges: React.ReactNode
+  onView: (v: View) => void
+  onOpenReplies: () => void
+}) {
+  const { primary, rates } = emailKpis(data, data.daily)
   const rows = withStatus(data)
   const active = rows.filter(r => r.status === 'active')
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageHeader
         eyebrow="Workspace overview"
         title={data.clientName}
@@ -1495,16 +1990,16 @@ function OverviewView({ data, badges, onView }: { data: DashboardData; badges: R
       <KpiRow items={primary} cols="grid-cols-2 xl:grid-cols-4" />
       <KpiRow items={rates} cols="grid-cols-2 xl:grid-cols-4" />
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mt-5 mb-5">
-        <Panel title="Sending trend" subtitle="Emails sent and replies per day" className="xl:col-span-2">
-          <TrendChart points={trend} barLabel="Sent" lineLabel="Replies" />
-        </Panel>
+      <div className="mt-5 mb-5">
+        <DailyActivity daily={data.daily} linkedin={data.linkedin?.daily} showTable={false} />
+      </div>
 
-        {data.linkedin ? (
-          <LinkedInSummary linkedin={data.linkedin} onOpen={() => onView('linkedin')} />
-        ) : (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+        <RepliesCard positive={data.totalPositiveReplies + (data.linkedin?.totals.interested ?? 0)} onOpen={onOpenReplies} />
+        {data.linkedin && <LinkedInSummary linkedin={data.linkedin} onOpen={() => onView('linkedin')} />}
+        <div className={data.linkedin ? '' : 'lg:col-span-2'}>
           <InboxSummary data={data} onOpen={() => onView('inboxes')} />
-        )}
+        </div>
       </div>
 
       {data.linkedinError && <InlineError>LinkedIn (HeyReach) failed to sync: {data.linkedinError}</InlineError>}
@@ -1530,7 +2025,7 @@ function EmailView({ data, badges }: { data: DashboardData; badges: React.ReactN
   const { rates } = emailKpis(data, data.daily)
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageHeader
         eyebrow="Email campaigns"
         title={data.clientName}
@@ -1632,7 +2127,7 @@ function LinkedInView({ data, badges }: { data: DashboardData; badges: React.Rea
   ]
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageHeader
         eyebrow="LinkedIn"
         title={data.clientName}
@@ -1643,11 +2138,14 @@ function LinkedInView({ data, badges }: { data: DashboardData; badges: React.Rea
       <KpiRow items={primary} cols="grid-cols-2 xl:grid-cols-4" />
       <KpiRow items={rates} cols="grid-cols-2 xl:grid-cols-4" />
 
-      <Panel title="Activity trend" subtitle="Connection requests and replies per day" className="mt-5 mb-5">
-        <TrendChart
-          points={series.map(d => ({ date: d.date, bar: d.connectionsSent, line: d.replies }))}
-          barLabel="Connections"
-          lineLabel="Replies"
+      <Panel title="Activity" subtitle="Connection requests, acceptances and replies per day, last 30 days" className="mt-5 mb-5">
+        <ActivityChart
+          dates={series.map(d => d.date)}
+          series={[
+            { key: 'conn', label: 'Connections sent', color: 'rgba(13,27,46,0.22)', kind: 'bar', values: series.map(d => d.connectionsSent) },
+            { key: 'acc', label: 'Accepted', color: 'var(--navy)', kind: 'line', values: series.map(d => d.connectionsAccepted) },
+            { key: 'rep', label: 'Replies', color: 'var(--orange)', kind: 'line', values: series.map(d => d.replies) },
+          ]}
         />
       </Panel>
 
@@ -1721,7 +2219,7 @@ function InboxesView({ data, badges }: { data: DashboardData; badges: React.Reac
   const accounts = [...data.accounts].sort((a, b) => (a.warmupScore ?? 101) - (b.warmupScore ?? 101))
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageHeader eyebrow="Sending inboxes" title={data.clientName} subtitle={`${scoreLabel} for every sending account, weakest first.`} badges={badges} />
       <KpiRow items={kpis} cols="grid-cols-2 xl:grid-cols-4" />
       <Panel title="Accounts" className="mt-5" right={<CountChip>{data.accounts.length}</CountChip>}>
@@ -1768,18 +2266,399 @@ function AccountRow({ account }: { account: EmailAccount }) {
   )
 }
 
+/* ── Positive replies panel ──────────────────────────────────────────────── */
+
+function timeAgo(iso: string): string {
+  if (!iso) return ''
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
+}
+
+function fullTime(iso: string): string {
+  return iso
+    ? new Date(iso).toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : 'Earlier'
+}
+
+type ChannelFilter = 'all' | 'email' | 'linkedin'
+
+/** Right-side slide-over with the workspace's positive-reply conversations. */
+function RepliesDrawer({
+  open,
+  onClose,
+  clientId,
+  clientName,
+}: {
+  open: boolean
+  onClose: () => void
+  clientId: string
+  clientName: string
+}) {
+  const [data, setData] = useState<RepliesData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [selected, setSelected] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [channel, setChannel] = useState<ChannelFilter>('all')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/replies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Could not load replies')
+      setData(json)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load replies')
+    } finally {
+      setLoading(false)
+    }
+  }, [clientId])
+
+  // Fetch on open; the server caches for a few minutes, so reopening is cheap.
+  useEffect(() => {
+    if (open) load()
+  }, [open, load])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (selected) setSelected(null)
+      else onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = overflow
+    }
+  }, [open, selected, onClose])
+
+  const threads = data?.threads ?? []
+  const hasLinkedIn = threads.some(t => t.channel === 'linkedin')
+  const q = query.trim().toLowerCase()
+  const visible = threads.filter(
+    t =>
+      (channel === 'all' || t.channel === channel) &&
+      (!q || [t.leadName, t.company, t.campaign, t.leadEmail].some(v => v?.toLowerCase().includes(q))),
+  )
+  const thread = threads.find(t => t.id === selected) ?? null
+
+  return (
+    <div className={`fixed inset-0 z-[70] ${open ? '' : 'pointer-events-none'}`} aria-hidden={!open}>
+      <div
+        className="absolute inset-0 transition-opacity duration-300"
+        style={{ background: 'rgba(13,27,46,0.42)', opacity: open ? 1 : 0, backdropFilter: open ? 'blur(2px)' : undefined }}
+        onClick={onClose}
+      />
+      <aside
+        role="dialog"
+        aria-label="Positive replies"
+        className="absolute right-0 top-0 h-full w-full sm:w-[500px] flex flex-col drawer-panel"
+        style={{
+          background: 'var(--pearl)',
+          boxShadow: '-24px 0 60px rgba(13,27,46,0.22)',
+          transform: open ? 'translateX(0)' : 'translateX(104%)',
+        }}>
+        {/* Header */}
+        <div className="px-5 pt-5 pb-4 border-b" style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase font-medium" style={{ color: 'var(--orange-ink)', letterSpacing: '1.4px' }}>
+                {clientName}
+              </div>
+              <h2 className="font-display text-[22px] font-medium mt-0.5" style={{ color: 'var(--ink)', letterSpacing: '-0.5px' }}>
+                Positive replies
+                {data && (
+                  <span className="ml-2 text-[13px] font-sans font-medium align-middle px-2 py-0.5 rounded-full" style={{ background: 'var(--green-wash)', color: 'var(--green-ink)' }}>
+                    {threads.length}
+                  </span>
+                )}
+              </h2>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <IconButton label="Refresh replies" onClick={load} spinning={loading}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </IconButton>
+              <IconButton label="Close" onClick={onClose}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </IconButton>
+            </div>
+          </div>
+
+          {!thread && (
+            <div className="flex flex-wrap items-center gap-2 mt-4">
+              <div className="relative flex-1 min-w-[180px]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-muted)' }} aria-hidden>
+                  <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                  <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Search name, company, campaign"
+                  className="zt-input w-full pl-9 pr-3 py-2 rounded-full text-[13px]"
+                />
+              </div>
+              {hasLinkedIn && (
+                <FilterToggle<ChannelFilter>
+                  value={channel}
+                  onChange={setChannel}
+                  options={[
+                    { id: 'all', label: 'All' },
+                    { id: 'email', label: 'Email' },
+                    { id: 'linkedin', label: 'LinkedIn' },
+                  ]}
+                />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          {thread ? (
+            <ThreadView thread={thread} onBack={() => setSelected(null)} />
+          ) : loading && !data ? (
+            <div className="p-4 flex flex-col gap-2.5">
+              {Array.from({ length: 6 }, (_, i) => (
+                <div key={i} className="rounded-xl p-4 flex gap-3" style={{ background: 'var(--surface)' }}>
+                  <div className="skeleton w-10 h-10 rounded-full flex-shrink-0" />
+                  <div className="flex-1 flex flex-col gap-2 pt-1">
+                    <div className="skeleton h-3 w-1/2 rounded" />
+                    <div className="skeleton h-2.5 w-4/5 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : error && !data ? (
+            <div className="p-8 text-center">
+              <div className="text-[14px] font-medium" style={{ color: 'var(--red-ink)' }}>
+                Could not load replies
+              </div>
+              <div className="text-[12.5px] mt-1" style={{ color: 'var(--ink-muted)' }}>
+                {error}
+              </div>
+              <button onClick={load} className="btn-orange press mt-4 px-4 py-2 rounded-full text-[13px] font-medium">
+                Try again
+              </button>
+            </div>
+          ) : (
+            <div className="p-3 flex flex-col gap-1.5">
+              {data?.errors.map(e => (
+                <div key={e} className="mx-1 mb-1 px-3 py-2 rounded-lg text-[12px]" style={{ background: 'var(--amber-wash)', color: 'var(--amber-ink)' }}>
+                  {e}
+                </div>
+              ))}
+              {visible.length === 0 ? (
+                <Empty>{threads.length === 0 ? 'No positive replies yet' : 'No conversations match'}</Empty>
+              ) : (
+                visible.map((t, i) => <ThreadRow key={t.id} thread={t} index={i} onOpen={() => setSelected(t.id)} />)
+              )}
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function IconButton({
+  label,
+  onClick,
+  spinning = false,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  spinning?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="press w-9 h-9 rounded-full flex items-center justify-center transition-colors hover:bg-[var(--surface-sunken)]"
+      style={{ color: 'var(--ink-soft)' }}>
+      <span className={spinning ? 'animate-spin-slow inline-flex' : 'inline-flex'}>{children}</span>
+    </button>
+  )
+}
+
+function ChannelBadge({ channel }: { channel: PositiveThread['channel'] }) {
+  return (
+    <span
+      className="text-[10px] uppercase font-medium px-1.5 py-0.5 rounded"
+      style={
+        channel === 'linkedin'
+          ? { background: 'rgba(10,102,194,0.1)', color: '#0a66c2', letterSpacing: '0.8px' }
+          : { background: 'var(--navy-wash)', color: 'var(--ink-soft)', letterSpacing: '0.8px' }
+      }>
+      {channel === 'linkedin' ? 'LinkedIn' : 'Email'}
+    </span>
+  )
+}
+
+function ThreadRow({ thread, index, onOpen }: { thread: PositiveThread; index: number; onOpen: () => void }) {
+  const lastLead = [...thread.messages].reverse().find(m => m.from === 'lead')
+  return (
+    <button
+      onClick={onOpen}
+      className="press group w-full text-left rounded-xl p-3.5 flex gap-3 transition-all hover:shadow-[var(--shadow-card)] animate-fade-in"
+      style={{ background: 'var(--surface)', animationDelay: `${Math.min(index, 12) * 25}ms` }}>
+      <span
+        className="w-10 h-10 rounded-full flex items-center justify-center font-display text-[13px] font-semibold flex-shrink-0 text-white"
+        style={{ background: thread.channel === 'linkedin' ? '#0a66c2' : 'var(--navy)' }}>
+        {initials(thread.leadName)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[14px] font-medium truncate" style={{ color: 'var(--ink)' }}>
+            {thread.leadName}
+          </span>
+          <span className="ml-auto text-[11.5px] whitespace-nowrap" style={{ color: 'var(--ink-muted)' }}>
+            {timeAgo(thread.lastAt)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 mt-0.5 text-[12px] min-w-0" style={{ color: 'var(--ink-muted)' }}>
+          <ChannelBadge channel={thread.channel} />
+          <span className="truncate">{[thread.company, thread.campaign].filter(Boolean).join(' · ') || thread.leadEmail}</span>
+        </div>
+        <div className="text-[12.5px] mt-1.5 line-clamp-2" style={{ color: 'var(--ink-soft)' }}>
+          {lastLead?.body || <span style={{ color: 'var(--ink-muted)' }}>Marked {thread.label.toLowerCase()}, no reply text in the recent inbox</span>}
+        </div>
+      </div>
+      <span
+        className="self-center text-[10.5px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
+        style={{ background: 'var(--green-wash)', color: 'var(--green-ink)' }}>
+        {thread.label}
+      </span>
+    </button>
+  )
+}
+
+function ThreadView({ thread, onBack }: { thread: PositiveThread; onBack: () => void }) {
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [thread.id])
+
+  return (
+    <div className="animate-slide-in">
+      <div className="sticky top-0 z-10 px-4 py-3 border-b flex items-center gap-3" style={{ background: 'var(--surface)', borderColor: 'var(--line)' }}>
+        <button
+          onClick={onBack}
+          aria-label="Back to all replies"
+          className="press w-8 h-8 rounded-full flex items-center justify-center hover:bg-[var(--surface-sunken)] flex-shrink-0"
+          style={{ color: 'var(--ink-soft)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path d="m15 6-6 6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <span
+          className="w-10 h-10 rounded-full flex items-center justify-center font-display text-[13px] font-semibold flex-shrink-0 text-white"
+          style={{ background: thread.channel === 'linkedin' ? '#0a66c2' : 'var(--navy)' }}>
+          {initials(thread.leadName)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[14.5px] font-medium truncate" style={{ color: 'var(--ink)' }}>
+              {thread.leadName}
+            </span>
+            <ChannelBadge channel={thread.channel} />
+          </div>
+          <div className="text-[12px] truncate" style={{ color: 'var(--ink-muted)' }}>
+            {[thread.title, thread.company].filter(Boolean).join(' at ') || thread.leadEmail}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-3 flex flex-wrap gap-1.5">
+        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: 'var(--green-wash)', color: 'var(--green-ink)' }}>
+          {thread.label}
+        </span>
+        {thread.campaign && (
+          <span className="text-[11px] px-2 py-0.5 rounded-full truncate max-w-full" style={{ background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }}>
+            {thread.campaign}
+          </span>
+        )}
+        {thread.leadEmail && (
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full" style={{ background: 'var(--surface-sunken)', color: 'var(--ink-soft)' }}>
+            {thread.leadEmail}
+          </span>
+        )}
+      </div>
+
+      <div className="px-4 py-4 flex flex-col gap-3">
+        {thread.messages.length === 0 ? (
+          <Empty>The reply text isn’t in the recent inbox, but this lead is marked {thread.label.toLowerCase()}.</Empty>
+        ) : (
+          thread.messages.map((m, i) => {
+            const us = m.from === 'us'
+            return (
+              <div key={i} className={`flex flex-col max-w-[86%] animate-fade-in ${us ? 'self-end items-end' : 'self-start items-start'}`} style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}>
+                <div
+                  className={`px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${us ? 'rounded-2xl rounded-br-md' : 'rounded-2xl rounded-bl-md'}`}
+                  style={us ? { background: 'var(--navy)', color: '#fff' } : { background: 'var(--surface)', color: 'var(--ink)', boxShadow: 'var(--shadow-card)' }}>
+                  {m.body}
+                </div>
+                <span className="text-[10.5px] mt-1 px-1" style={{ color: 'var(--ink-muted)' }}>
+                  {us ? 'Us' : thread.leadName.split(' ')[0]} · {fullTime(m.at)}
+                </span>
+              </div>
+            )
+          })
+        )}
+        <div ref={endRef} />
+      </div>
+    </div>
+  )
+}
+
 /* ── States ──────────────────────────────────────────────────────────────── */
 
-function LoadingState() {
+/** Placeholder layout shown while a workspace loads for the first time. */
+function SkeletonPage() {
   return (
-    <div
-      className="rounded-2xl border flex flex-col items-center justify-center py-32 gap-4"
-      style={{ ...CARD_STYLE, color: 'var(--ink-muted)' }}>
-      <div
-        className="w-7 h-7 rounded-full border-[2.5px] animate-spin-slow"
-        style={{ borderColor: 'var(--line-strong)', borderTopColor: 'var(--orange)' }}
-      />
-      <div className="text-[13px]">Syncing live data…</div>
+    <div aria-busy="true" aria-label="Loading">
+      <div className="skeleton h-3 w-28 rounded mb-3" />
+      <div className="skeleton h-8 w-64 rounded-lg mb-2" />
+      <div className="skeleton h-3.5 w-80 max-w-full rounded mb-8" />
+      {[0, 1].map(row => (
+        <div key={row} className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-3">
+          {[0, 1, 2, 3].map(i => (
+            <div key={i} className="rounded-2xl border p-5" style={CARD_STYLE}>
+              <div className="skeleton h-2.5 w-20 rounded mb-4" />
+              <div className="skeleton h-7 w-24 rounded-md mb-3" />
+              <div className="skeleton h-2.5 w-28 rounded" />
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="rounded-2xl border p-6 mt-5" style={CARD_STYLE}>
+        <div className="skeleton h-4 w-32 rounded mb-6" />
+        <div className="flex items-end gap-1.5 h-[220px]">
+          {Array.from({ length: 30 }, (_, i) => (
+            <div key={i} className="skeleton flex-1 rounded-t" style={{ height: `${25 + ((i * 37) % 70)}%` }} />
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

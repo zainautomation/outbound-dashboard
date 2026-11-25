@@ -1,5 +1,5 @@
 import { num, openMcpSession, parseToolJson } from './mcp'
-import type { Campaign, CampaignAnalytics, CampaignStatus, EmailAccount, ProviderData } from '../types'
+import type { Campaign, CampaignAnalytics, CampaignStatus, DailyPoint, EmailAccount, ProviderData } from '../types'
 
 interface SmartleadCampaign {
   id: number
@@ -51,6 +51,49 @@ export function extractApiKey(mcpUrl: string): string | null {
   return query.includes('=') ? null : decodeURIComponent(query)
 }
 
+interface SmartleadDayWise {
+  data?: {
+    day_wise_stats?: {
+      date?: string
+      email_engagement_metrics?: { sent?: number | string; replied?: number | string; positive_replied?: number | string }
+    }[]
+  }
+}
+
+/** Day-level history window for the activity charts. */
+const DAILY_DAYS = 90
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10)
+
+/**
+ * Smartlead labels days "26 Oct" with no year, one entry per day from
+ * start_date — so dates are assigned by position, not parsed.
+ */
+async function fetchDaily(
+  call: <T>(tool: string, args?: Record<string, unknown>) => Promise<T>,
+): Promise<DailyPoint[]> {
+  const end = new Date()
+  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (DAILY_DAYS - 1)))
+  const range = { start_date: isoDay(start), end_date: isoDay(end) }
+
+  const [overall, positive] = await Promise.all([
+    call<SmartleadDayWise>('get_day_wise_overall_stats', range),
+    call<SmartleadDayWise>('get_day_wise_positive_reply_stats', range).catch(() => ({}) as SmartleadDayWise),
+  ])
+  const positives = positive.data?.day_wise_stats ?? []
+
+  return (overall.data?.day_wise_stats ?? []).map((day, i) => {
+    const date = new Date(start)
+    date.setUTCDate(start.getUTCDate() + i)
+    return {
+      date: isoDay(date),
+      sent: num(day.email_engagement_metrics?.sent),
+      replies: num(day.email_engagement_metrics?.replied),
+      positive: num(positives[i]?.email_engagement_metrics?.positive_replied),
+    }
+  })
+}
+
 /** Smartlead statuses: ACTIVE, PAUSED, COMPLETED, DRAFTED, STOPPED. */
 function toStatus(raw: string | undefined): CampaignStatus {
   switch (raw?.toUpperCase()) {
@@ -99,9 +142,11 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
     const call = async <T>(tool: string, args: Record<string, unknown> = {}) =>
       parseToolJson<T>(await session.call(tool, { ...args, smartlead_user_api_key: apiKey }), tool)
 
-    const [rawCampaigns, rawAccounts] = await Promise.all([
+    const [rawCampaigns, rawAccounts, daily] = await Promise.all([
       call<SmartleadCampaign[]>('get_campaigns'),
       call<SmartleadAccount[]>('get_email_accounts'),
+      // Charts are a bonus; a failure here must not blank the workspace.
+      fetchDaily(call).catch(() => [] as DailyPoint[]),
     ])
 
     const campaignList = Array.isArray(rawCampaigns) ? rawCampaigns : []
@@ -148,8 +193,8 @@ export async function fetchSmartlead(mcpUrl: string): Promise<ProviderData> {
       }
     })
 
-    // Smartlead's MCP surface has no unread-inbox count and no day-level series.
-    return { campaigns, analytics, accounts, daily: [] }
+    // Smartlead's MCP surface has no unread-inbox count.
+    return { campaigns, analytics, accounts, daily }
   } finally {
     session.close()
   }

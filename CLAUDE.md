@@ -22,6 +22,8 @@ The browser never calls a outreach platform directly. Two server-side routes:
 ```
 POST /api/sync      → one client   → provider adapter → that client's MCP server
 POST /api/overview  → all clients  → provider adapter per client, in parallel
+POST /api/replies   → one client   → positive-reply conversations (email + LinkedIn)
+GET|POST|DELETE /api/auth → restore / sign in / sign out (session cookie)
 ```
 
 Both return normalized JSON. There is no LLM in this path — the adapters speak
@@ -49,7 +51,7 @@ the word "MCP". Before changing an adapter, know these differences:
 | Unread | yes | not exposed — `unreadCount` is undefined, and the UI shows "—" |
 | Pagination | `list_campaigns` / `list_accounts` return **10 per page** by default — always page with `limit: 100` + `starting_after` | lists return everything |
 | Status | 0 draft, 1 active, 2 paused, 3 completed, 4 subsequences, negatives = holds | `ACTIVE` / `PAUSED` / `COMPLETED` / `DRAFTED` / `STOPPED` |
-| Daily series | `get_daily_campaign_analytics` | none |
+| Daily series | `get_daily_campaign_analytics` | `get_day_wise_overall_stats` + `get_day_wise_positive_reply_stats` (last 90 days; dates are "26 Oct", mapped by position) |
 
 `openHttpSession` never requires an `mcp-session-id`: Instantly dropped
 sessions in its v2.0.0 server (Nov 2026), and requiring one broke every
@@ -89,9 +91,13 @@ Two roles validated against env vars only — no database:
 deliberately no default value, so a misconfigured deployment fails closed rather
 than granting admin access. **Do not reintroduce a fallback.**
 
-Every data route re-validates credentials from the request body:
-`authorizeClient()` pins client users to their own `clientId` regardless of what
-they request; `authorizeAdmin()` guards `/api/overview` entirely.
+Sign-in sets a signed, httpOnly `zt_session` cookie (`src/lib/session.ts`, HMAC,
+7 days); the browser never keeps the password, and a refresh restores the
+session via `GET /api/auth`. The signing secret is `SESSION_SECRET` if set,
+otherwise derived from every configured credential (changing a password signs
+everyone out). Every data route resolves the caller from the cookie:
+`authorizeClient(req, id)` pins client users to their own workspace;
+`authorizeAdmin(req)` guards `/api/overview`.
 
 ### Client Configuration
 
@@ -121,6 +127,10 @@ a stray leading space in a NAME reaches the UI otherwise.
 - `src/lib/providers/{instantly,smartlead}.ts` — per-platform email adapters
 - `src/lib/providers/heyreach.ts` — LinkedIn (HeyReach) adapter
 - `src/lib/cache.ts` — single-flight TTL cache with stale-on-error for provider fetches
+- `src/lib/session.ts` — signed session cookie
+- `src/lib/providers/replies.ts` — positive-reply threads: Instantly (positive leads matched to reply emails), Smartlead (master inbox, positive categories), HeyReach (conversations auto-tagged Interested)
+- `src/lib/text.ts` — email HTML to text, quoted-history stripping
+- `src/app/api/replies/route.ts` — POST: one workspace's positive conversations
 - `src/lib/authorize.ts` — credential checks and `redact()`
 - `src/lib/clients.ts` — env-var client registry
 - `src/lib/types.ts` — types shared between API routes and UI
@@ -153,9 +163,15 @@ action. Colors are CSS variables in `globals.css`, mirrored in
 | `var(--red-ink)` / `--red-wash` | Errors, failed sync |
 
 Layout (modelled on StackOptimise / Northline): a navy left `Sidebar`
-(logo, workspace card, Workspace views — Overview / Email campaigns / LinkedIn
-/ Sending inboxes — and, for admins, the client list); `MobileNav` replaces it
-below `lg`. No refresh button or sync timestamp — data refreshes silently every
+(logo, admin client dropdown, Workspace views — Overview / Daily activity /
+Email campaigns / LinkedIn / Sending inboxes — and a Positive replies entry
+that opens `RepliesDrawer`, a right slide-over with chat-style threads);
+`MobileNav` replaces it below `lg`. The current client and view live in the
+URL hash (`#/clientId/view`) so refresh keeps the page; each fetched workspace
+is cached in state so switching back is instant, with a thin `TopProgress` bar
+during refreshes and `SkeletonPage` on first load. `DailyActivity` /
+`ActivityChart` are the interactive daily charts (7/30/90 days, toggleable
+series, hover card, change vs previous period). No refresh button or sync timestamp — data refreshes silently every
 30s. Pages open with `PageHeader`, then two `KpiRow`s: volume (sent, prospects,
 replies, positive — with `Sparkline`s) and rates (reply %, positive %,
 **Email:lead ratio** highlighted in orange, bounce %), each rate card carrying
